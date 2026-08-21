@@ -1,0 +1,113 @@
+# Project Status
+
+| Field | Value |
+| --- | --- |
+| Date | 2026-08-21 |
+| Phase | Milestone 2A — Hardened read-only real-device candidate |
+| Local branch | `feat/read-only-device-foundation` |
+| Remote repository | `https://github.com/FPVARABIC/expresslrs-arabic-easy-setup`; public repository with M2A [Draft PR #3](https://github.com/FPVARABIC/expresslrs-arabic-easy-setup/pull/3) |
+| Public Web preview | [Live GitHub Pages preview](https://fpvarabic.github.io/expresslrs-arabic-easy-setup/); the deployment workflow checks out and revalidates an explicitly reviewed app SHA before publishing |
+| Stable upstream | ExpressLRS 4.1.0 / `a9d4a9cb5b5687c4c9d7e9e7fbdf44ad93651da6` |
+| Development reference | `73ce820ba51437f73f31686233b607c58e188e7b` |
+| Hardware validation | None |
+| Firmware modifications | None |
+| Performance claims | None |
+| Phase 0 exit | Accepted for Mock/Foundation; hardware/write/release gates deferred |
+
+## Completed
+
+- Project identity and independent local repository initialized.
+- Stable and development ExpressLRS references pinned.
+- Official related repositories pinned for inspection.
+- Architecture, Binding, Build, Flashing, Target, Web, Android, RF, licensing, security, upstream, and performance reports completed at source-review level.
+- Reuse matrix, ADR set, Phase 0 exit review, and Mock-only Milestone 1 proposal completed.
+- No upstream/project Firmware source copied or modified.
+- Owner approved model-agnostic M1 Foundation and Cairo typography.
+- TypeScript workspace and eight independent packages created: Domain, Diagnostics, Device, Compatibility, Workflows, Browser Platform, Mock Platform, and i18n (nine workspace projects including Web).
+- Device identity resolution is evidence-based and requires independent trust domains for `CONFIRMED`.
+- Exclusive device-session ownership, fail-closed Compatibility, and verified-only operation success are implemented.
+- Read-only discovery handles confirmed, unknown, ambiguous, conflicting, disconnected, and cancelled synthetic cases.
+- Arabic-first responsive Web shell created with local Cairo Variable, English fallback, Easy/Advanced modes, and explicit Mock/no-hardware-write labelling.
+- The published baseline contained 29 automated cases (25 Core + 4 Web); the local M1 candidate now passes 176/176 Vitest cases across 16 files, including adversarial input-mutation, cancellation, malformed/non-string-version, observer-failure, workflow/privacy, and i18n matrices.
+- The full local `pnpm check` gate passes: Prettier, ESLint with zero warnings, TypeScript, dependency boundaries for seven workspace packages, 45 local links across 47 Markdown files, the complete `MASTER_PLAN.md` contract, all 176 tests, and the production Web build.
+- The frozen offline install confirms that the lockfile is current and all 272 lockfile entries pass pnpm's configured supply-chain policies.
+- The dependency license policy passes for 248 package/version records across 11 observed expressions with no exact exception, and the high-severity advisory audit reports no known vulnerability.
+- Root CI/tooling configuration created; no publish/release action exists.
+- Draft PR #1 CI now reaches dependency installation; run #2 generated the reviewed bootstrap lockfile artifact and exposed the first source gate at formatting.
+- Draft PR #1 CI run #4 passed frozen dependency installation, ESLint, and TypeScript; 27 of 29 Vitest cases passed, with the two Web failures traced to missing DOM cleanup between tests.
+- The CI-generated Prettier patch was reviewed and applied to 19 source/config files; the generated `pnpm-lock.yaml` keeps pnpm's native format and is excluded from Prettier.
+- Explicit React DOM cleanup now covers both root-workspace and direct Web Vitest runs.
+- Draft PR #1 CI run #5 passed the complete published baseline: frozen install, Prettier, ESLint, TypeScript, 29/29 tests, and production Web build.
+- Vitest is split into Core/Node and Web/jsdom projects; Core no longer receives React DOM test setup.
+- Dependency direction and Markdown local links now have deterministic CI checkers.
+- Typed Synthetic Easy Binding and Firmware Update workflows now re-identify after reconnect and require independent verification before `SUCCESS`.
+- Interrupted write, no-return, wrong Target/version, no-link, Model Mismatch, permission denial, invalid artifact, major mismatch, retry, and per-stage disconnect fixtures are implemented.
+- A provisional `FoundationExpressLrsModule` proves Discovery/Binding/Update can be invoked outside React and is exercised by the Web Mock preview.
+- Structured Audit events, fail-closed Allowlist privacy scrubbing, threat model, storage registry, and dependency-admission ledger are implemented.
+- Synthetic Firmware execution now requires a schema-v1 provenance envelope. Core rebuilds fixed own data properties before observers, validates canonical metadata, freezes the nested snapshot, and blocks Target or artifact-digest disagreement before provider execution. Provenance remains labeled `COHERENCE_ONLY`; no trusted source or verified signed manifest exists.
+- Firmware Update now also requires exact in-memory bytes. Core copies them before the first observer, enforces a 64 MiB ceiling, checks the declared size, verifies canonical SHA-256 through an assurance-labeled digest boundary, and supplies a fresh verified copy to each provider stage. Mismatched size/digest and invalid digest providers stop before any update-provider call.
+- The Browser Platform now contains a bounded private-name-free `Blob`/`File` reader and a Web Crypto SHA-256 adapter labeled `CRYPTOGRAPHIC`. Synthetic Web execution keeps its deterministic fixture verifier labeled `SYNTHETIC_ONLY`.
+- ADR-0014 pins the future manifest envelope to RFC 8785 canonical JSON plus Ed25519 and defines domain separation, root rotation, revocation, role/channel scope, expiry, and rollback requirements. No key or root metadata is admitted, so operation evidence remains `UNVERIFIED_NO_TRUST_ROOT`.
+- ADR-0015 implements the Hardware-independent Manifest mechanics against Synthetic fixtures only: a 64 KiB bounded JSON parser rejects duplicate decoded keys, unsafe numbers, malformed Unicode, excess depth/collections, and unknown fields; an allowlisted payload is frozen and converted to domain-separated RFC 8785 bytes; and Web Crypto verifies Ed25519 with a caller-supplied Synthetic key. A match is labeled `VALID_UNTRUSTED` and still carries `UNVERIFIED_NO_TRUST_ROOT`.
+- The current Manifest parser admits only the `synthetic` channel and signing role, canonical unpadded 64-byte signatures, raw `application/octet-stream` artifacts with no compression, `synthetic.` build options, and the existing 64 MiB artifact ceiling. It is not connected to catalog trust or Firmware execution, and Stable/Beta/real-writer claims fail closed.
+- ADR-0016 adds a separate 64 KiB `synthetic-root` parser with exact Ed25519 keys, `root`/`synthetic` roles, validity interval, thresholds, canonical domain-separated signature bytes, and parser-provenance guards. Exact `N → N+1` rotation must satisfy both the old and incoming root thresholds; skipped versions, duplicate signers, changed key bytes under one ID, malformed provider results, and accessor-backed inputs fail closed.
+- Root freshness uses one fixed canonical UTC value from the only admitted clock assurance, `SYNTHETIC_ONLY`. Manifest key resolution requires the exact root version, fresh metadata, a currently listed key, and the single-signature role threshold. Removing the key in a verified successor root blocks it as revoked. Every success remains `UNVERIFIED_NO_TRUST_ROOT` and is disconnected from catalog/update authorization.
+- A separate 32 KiB strict codec models a highest root version and at most 128 per-Target release floors. Internally proven transitions detect root/release rollback, root-state lag, and equal-sequence/different-digest conflict. They return only immutable `ADVANCED_UNPERSISTED`/`UNCHANGED_UNPERSISTED` snapshots; no Browser database, key, or persistence adapter exists. The exact future IndexedDB bundle is registry status `PROPOSED` only.
+- ADR-0017 adds a separate exact Synthetic compressed-artifact descriptor that names both byte forms. Core caps gzip input at 16 MiB and decompressed output at 64 MiB, accepts at most 4,096 exact chunks of 64 KiB, hashes input and output independently, and rejects malformed, excessive, accessor-backed, mutated, or late-emitted provider data.
+- The Browser Platform now has a streaming `DecompressionStream("gzip")` adapter that rejects invalid checksums/trailing data through the standardized primitive, splits platform output before the Core boundary, and remains labeled `SYNTHETIC_ONLY`.
+- Decompressed fixtures use an exact non-real executable container with fixed magic/version/length framing and an embedded canonical Target. The Target must match the descriptor. Success is immutable `VERIFIED_SYNTHETIC_FIXTURE` plus `BLOCKED_SYNTHETIC_FIXTURE`, returns no payload bytes, and is disconnected from Manifest/catalog/update/writer paths.
+- ADR-0018 adds a separate 16 KiB Synthetic Manifest v2 with its own RFC 8785/Ed25519 domain. Its exact payload signs the Target, compressed and decompressed sizes and SHA-256 values, gzip/media identity, Synthetic executable form, release sequence, signer role, and required root version without changing raw-only Manifest v1.
+- The existing fresh `synthetic` root role can resolve and verify this v2 signer. Release rollback uses the compressed SHA-256 as the exact downloaded/decompression-input identity, so an equal release sequence with a different archive conflicts; all results remain `UNVERIFIED_NO_TRUST_ROOT` and `UNPERSISTED`.
+- Catalog-candidate evidence now requires internally branded v2 root verification, bounded artifact validation, and the rollback transition created from that exact verification object. Clones, forgeries, cross-wired evidence, and any Target/size/hash mismatch fail closed. Success is still `NOT_ADMITTED_UNTRUSTED_SYNTHETIC` plus `BLOCKED_SYNTHETIC_FIXTURE`, returns no bytes, and creates no catalog entry or writer path.
+- The current Firmware provider contract admits only `SYNTHETIC_ONLY`; an unknown or claimed real writer is rejected by Core provider selection before invocation.
+- CI requires the committed lockfile with frozen installation and has no PR bootstrap fallback. It is also configured for dependency inventory plus a fail-closed license policy, high-severity advisory audit, Core browser/DOM boundary enforcement, Markdown-link checking, and verified immutable Action pins.
+- Draft PR #1 GitHub Actions run #6 passed on candidate commit `9db3f268d32732840d475281cd2435acbbe0f7bb`, including the frozen install, all quality/build gates, license inventory/policy, and high-severity advisory audit.
+- The M1 evidence-only successor at `5c543cb` also passed [GitHub Actions run #7](https://github.com/melyanneahmed-rgb/expresslrs-arabic-easy-setup/actions/runs/32390823563); owner acceptance review remains pending.
+- A separate M2A branch now contains a real Browser Local HTTP candidate that performs one explicit `GET /config` against only the three pinned ExpressLRS local origins. It does not scan, redirect, send credentials, or expose any write method.
+- The M2A parser requires a bounded JSON response and rebuilds only allowlisted device-reported facts. Raw response data, UID, Wi-Fi options, SSID, password, `lua_name`, and unknown fields do not cross the adapter boundary.
+- All Local HTTP facts remain `UNVALIDATED` in one self-reported trust domain. Web composition deliberately uses an empty Target Catalog, so the resulting identity remains `UNKNOWN` and cannot authorize Binding or update.
+- Device-session leases now use exact opaque-object ownership, while the Core boundary rebuilds and freezes descriptors, evidence, and capabilities supplied by providers.
+- The Local HTTP transport now uses fixed 256 KiB storage, rejects empty or excessive chunks, enforces a strict JSON/UTF-8 boundary, and releases an origin only after normal completion or proven successful cleanup. A rejected, absent, accessor-backed, or otherwise unprovable cleanup keeps that origin fail-closed quarantined for the current JavaScript realm.
+- Provider-controlled error reasons/details, write receipts, verification diagnostics, reconnect descriptors, and attacker-controlled audit field names no longer cross Workflow/audit export boundaries without a Core-owned rebuild. Accessor-backed provider metadata is treated as absent rather than executed, and Audit output uses bounded counts and fixed categories.
+- A framework-independent Diagnostics package creates value-free, fixed-category support reports and rejects inconsistent success/reconnect claims.
+- The real-device UI now exposes honest Workflow progress, manual refresh/reconnect snapshot comparison, focus movement, connection guidance, and explicit safe support copy without polling or a live-connection claim.
+- A production `_headers` artifact and deterministic checker restrict CSP connections to self plus the three reviewed ExpressLRS origins and enforce the policy in source/build output.
+- The GitHub Pages preview candidate now derives and verifies the repository base path, injects a partial reviewed CSP meta policy, uses the agreed dark-green/turquoise/pale-yellow direction, keeps Easy tasks first, and ships required runtime/font notices. Official deployment Actions are pinned to immutable SHAs and may upload only the quality-gated Web `dist` artifact.
+- Easy Mode is now a task-first screen with exactly three primary actions: Binding, update to the latest approved version, and essential settings. Its default flow is connect, automatic identification, then execute and verify; no Target or band choice is presented to the ordinary user.
+- The default screen contains no question-form prompts. A localization contract rejects Arabic or English question punctuation, while Mock scenarios, device evidence, Local HTTP reading, logs, and support export remain available only after explicitly opening Advanced Mode.
+- The Firmware Update Core is no longer coupled to Wi-Fi or to provider registration order. It defines canonical Wi-Fi OTA, UART, Betaflight/EdgeTX passthrough, XMODEM, STLink, DFU, and external-tool methods; the Target Catalog supplies an ordered preference and Core selects exactly one matching provider automatically. Empty, malformed, duplicate, unsupported, ambiguous, or observer-mutated registries fail before provider execution. This is Synthetic architecture evidence only and adds no real writer.
+- Every Synthetic update now uses a Core-owned `firmware-update-post-write-v1` plan requiring reconnect, the same session-local device identity, the expected Target, and the expected Firmware version. Strict plan evaluation plus the provider's reviewed verification shape is required for `SUCCESS`; the immutable plan and provenance snapshot are returned as evidence.
+- Candidate `ee8221feebb6b68d591d38581d4b1d2ef0253cc3` passed official [CI run #33](https://github.com/FPVARABIC/expresslrs-arabic-easy-setup/actions/runs/32426675388) and [run #34](https://github.com/FPVARABIC/expresslrs-arabic-easy-setup/actions/runs/32426676818). Exact-SHA [reviewed Pages deploy run #4](https://github.com/FPVARABIC/expresslrs-arabic-easy-setup/actions/runs/32426876024) then passed and the live bundle was verified to contain the canonical multi-method selector while retaining Arabic/RTL and the three-action Easy UI.
+- The first public GitHub Pages deployment passed from `main` in [run #1](https://github.com/FPVARABIC/expresslrs-arabic-easy-setup/actions/runs/32419758878), after checking out and revalidating exact reviewed app SHA `8889381e9f60e93b647efa02117ae0bf513970f4`. The live page was verified at the repository subpath with Arabic/RTL default, English/LTR switching, Easy tasks before the real-device experiment, Advanced Mode off by default, repository-scoped JS/CSS assets, the reviewed meta CSP, and `no-referrer`. This is still not Hardware or trusted-host evidence.
+- The current local M2A candidate passes the complete quality gate: formatting, ESLint with zero warnings, TypeScript, nine-package dependency boundaries, security-header source/build checks, 96 local links across 59 Markdown files, the full Master Plan contract, 466/466 Vitest cases across 33 files, and the production Web/Pages build. The installed graph's last official 248 package/version inventory across 11 license expressions passed policy with no exception, and the current high-severity advisory audit reports no known vulnerability; official CI regenerates the canonical pnpm inventory for this exact commit. This is not Hardware evidence.
+- M2A [Draft PR #3](https://github.com/FPVARABIC/expresslrs-arabic-easy-setup/pull/3) remains open and unmerged. The immediately preceding Manifest candidate `9b9544e51107af6fca2847c59e18e3f1f6783672` passed official [CI run #39](https://github.com/FPVARABIC/expresslrs-arabic-easy-setup/actions/runs/32478925756), [run #40](https://github.com/FPVARABIC/expresslrs-arabic-easy-setup/actions/runs/32478925760), and exact-SHA [reviewed Pages deploy run #7](https://github.com/FPVARABIC/expresslrs-arabic-easy-setup/actions/runs/32479022847).
+
+## In progress
+
+- Continue Hardware-independent update safety with bounded acquisition and corresponding-source evidence for the exact v2-named Synthetic object; no trust root, persisted security store, real artifact, catalog entry, or writer is admitted yet.
+- Review ADR-0016's initial-root ceremony, clock assurance, and proposed atomic IndexedDB bundle before any admission or persistence implementation.
+- Review M2A Draft PR #3 and complete the still-pending M1 owner acceptance review.
+- Execute the prepared reference-hardware/browser runbook and matrix for TX and RX Local HTTP reads, disconnect/reconnect, Local Network Access, device-AP switching, and mobile behavior.
+- Keep all Binding, configuration, reboot, update, Firmware, and RF paths disabled in the real-device adapter.
+
+## Blocked
+
+- Web Flasher/Targets reuse: no explicit repository-level license at inspected SHAs.
+- Product repository license and distinct public brand: pending review.
+- Browser support: code candidate exists, but desktop/mobile/LNA/mixed-content/device-AP behavior remains unvalidated on reference hardware, including Chrome Android 148+.
+- Real Binding/update verification: Synthetic contract proven; per-provider hardware proof pending.
+- Official 4.1.0 artifact Inputs: exact Targets/toolchain identity not fully known.
+- Artifact authenticity: internal provenance coherence, exact byte hashing, bounded Synthetic Manifest/root parsing, untrusted Ed25519 verification, dual-threshold Synthetic rotation/revocation, expiry evaluation, unpersisted rollback transitions, isolated Synthetic gzip/executable identity validation, and signed dual-form catalog-candidate linkage are implemented. An admitted initial root, production clock assurance, atomic persisted root/rollback state, real executable parsers, artifact acquisition, corresponding-source evidence, and catalog admission remain unimplemented.
+- Performance hardware/controlled RF setup: not selected. This does not block Mock/Foundation.
+- A reviewed CSP deployment artifact now exists, but the eventual production host must serve and verify the same response header; `_headers` compatibility alone is not deployed-host evidence.
+- GitHub Pages cannot enforce the reviewed response-only headers; its HTML meta CSP is partial, so trusted-host status remains blocked even after the public preview deploys.
+- The public repository does not yet publish a private vulnerability-reporting route. Non-sensitive Issues remain possible, but sensitive exploit details must not be posted publicly.
+
+## Next
+
+- Conduct owner review of M1 evidence and M2A Draft PR #3; keep it Draft until the external gates are resolved.
+- Run the documented read-only Hardware/Browser runbook; record exact device, Firmware, browser, OS, field behavior, disconnect/reconnect, and privacy observations.
+- Keep the real Targets adapter empty/license-safe until upstream permission is resolved; never promote a self-reported Target alone.
+- Conduct owner review of ADR-0016's root ceremony, expiry/clock assurance, and proposed atomic storage contract; do not embed/admit a key or activate persistence during that review.
+- Add bounded Synthetic acquisition and corresponding-source evidence for the exact v2-named compressed object before any catalog admission; keep every writer blocked.
+- Do not implement real hardware writes until reference hardware and provider verification exist.
