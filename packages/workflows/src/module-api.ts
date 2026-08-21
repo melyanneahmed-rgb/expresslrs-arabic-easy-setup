@@ -1,15 +1,17 @@
 import type {
-  FirmwareArtifactDescriptor,
+  FirmwareUpdateArtifact,
   TargetCatalog,
 } from "@elrs-easy/compatibility";
 import type {
   DeviceSessionManager,
   DiscoveryProvider,
+  IdentityEvidenceTrustPolicy,
 } from "@elrs-easy/device";
 import {
   CoreOperationError,
   type CancellationSignal,
   type DeviceDescriptor,
+  type FirmwareArtifactDigestProvider,
   type OperationRecord,
 } from "@elrs-easy/domain";
 
@@ -34,7 +36,7 @@ import {
 export interface FoundationModuleProviders {
   readonly discovery: DiscoveryProvider;
   readonly binding: BindingProvider;
-  readonly firmwareUpdate: FirmwareUpdateProvider;
+  readonly firmwareUpdates: readonly FirmwareUpdateProvider[];
 }
 
 /**
@@ -46,19 +48,29 @@ export class FoundationExpressLrsModule {
   readonly #providers: FoundationModuleProviders;
   readonly #sessions: DeviceSessionManager;
   readonly #catalog: TargetCatalog;
+  readonly #artifactDigestProvider: FirmwareArtifactDigestProvider;
   readonly #clock?: WorkflowClock;
+  readonly #discoveryEvidencePolicy?: IdentityEvidenceTrustPolicy;
   readonly #usedOperationIds = new Set<string>();
 
   public constructor(input: {
     readonly providers: FoundationModuleProviders;
     readonly sessions: DeviceSessionManager;
     readonly catalog: TargetCatalog;
+    readonly artifactDigestProvider: FirmwareArtifactDigestProvider;
     readonly clock?: WorkflowClock;
+    readonly discoveryEvidencePolicy?: IdentityEvidenceTrustPolicy;
   }) {
-    this.#providers = Object.freeze({ ...input.providers });
+    this.#providers = Object.freeze({
+      discovery: input.providers.discovery,
+      binding: input.providers.binding,
+      firmwareUpdates: Object.freeze([...input.providers.firmwareUpdates]),
+    });
     this.#sessions = input.sessions;
     this.#catalog = input.catalog;
+    this.#artifactDigestProvider = input.artifactDigestProvider;
     this.#clock = input.clock;
+    this.#discoveryEvidencePolicy = input.discoveryEvidencePolicy;
   }
 
   public discover(input: {
@@ -75,6 +87,9 @@ export class FoundationExpressLrsModule {
       provider: this.#providers.discovery,
       sessions: this.#sessions,
       catalog: this.#catalog,
+      ...(this.#discoveryEvidencePolicy === undefined
+        ? {}
+        : { evidencePolicy: this.#discoveryEvidencePolicy }),
       ...(this.#clock === undefined ? {} : { clock: this.#clock }),
       ...(onProgress === undefined ? {} : { observer: onProgress }),
       ...(signal === undefined ? {} : { signal }),
@@ -110,7 +125,8 @@ export class FoundationExpressLrsModule {
   public update(input: {
     readonly operationId: string;
     readonly descriptor: DeviceDescriptor;
-    readonly artifact: FirmwareArtifactDescriptor;
+    readonly artifact: FirmwareUpdateArtifact;
+    readonly artifactBytes: Uint8Array;
     readonly userConfirmed: boolean;
     readonly signal?: CancellationSignal;
     readonly onProgress?: OperationObserver<FirmwareUpdateResult>;
@@ -118,6 +134,7 @@ export class FoundationExpressLrsModule {
     const operationId = input.operationId;
     const descriptor = input.descriptor;
     const artifact = input.artifact;
+    const artifactBytes = input.artifactBytes;
     const userConfirmed = input.userConfirmed;
     const signal = input.signal;
     const onProgress = input.onProgress;
@@ -126,8 +143,10 @@ export class FoundationExpressLrsModule {
       operationId,
       descriptor,
       artifact,
+      artifactBytes,
+      artifactDigestProvider: this.#artifactDigestProvider,
       userConfirmed,
-      provider: this.#providers.firmwareUpdate,
+      providers: this.#providers.firmwareUpdates,
       sessions: this.#sessions,
       catalog: this.#catalog,
       ...(this.#clock === undefined ? {} : { clock: this.#clock }),

@@ -1,4 +1,4 @@
-import type { FirmwareArtifactDescriptor } from "@elrs-easy/compatibility";
+import type { FirmwareUpdateArtifact } from "@elrs-easy/compatibility";
 import {
   CoreOperationError,
   type CancellationSignal,
@@ -6,6 +6,7 @@ import {
   type DeviceDescriptor,
   type DeviceIdentityEvidence,
   type DeviceSession,
+  type FirmwareUpdateMethod,
   type OperationErrorCode,
 } from "@elrs-easy/domain";
 import type {
@@ -15,6 +16,7 @@ import type {
   FirmwareUpdateProvider,
   FirmwareVerificationResult,
   FirmwareWriteReceipt,
+  VerifiedFirmwareUpdateArtifact,
 } from "@elrs-easy/workflows";
 
 import type { SyntheticDeviceFixture } from "./fixtures.js";
@@ -214,6 +216,8 @@ export class ScriptedBindingProvider implements BindingProvider {
 
 export class ScriptedFirmwareUpdateProvider implements FirmwareUpdateProvider {
   public readonly id: string;
+  public readonly assurance = "SYNTHETIC_ONLY" as const;
+  public readonly updateMethod: FirmwareUpdateMethod;
   public readonly updateCapabilityId: string;
   readonly #initial: SyntheticDeviceFixture;
   readonly #reconnected: SyntheticDeviceFixture;
@@ -229,6 +233,7 @@ export class ScriptedFirmwareUpdateProvider implements FirmwareUpdateProvider {
   public constructor(input: {
     readonly initial: SyntheticDeviceFixture;
     readonly providerId?: string;
+    readonly updateMethod?: FirmwareUpdateMethod;
     readonly updateCapabilityId?: string;
     readonly reconnected?: SyntheticDeviceFixture;
     readonly reconnects?: boolean;
@@ -238,6 +243,7 @@ export class ScriptedFirmwareUpdateProvider implements FirmwareUpdateProvider {
     readonly fault?: MockFault<UpdateMockStage>;
   }) {
     this.id = input.providerId ?? "mock-wifi";
+    this.updateMethod = input.updateMethod ?? "WIFI_OTA";
     this.updateCapabilityId = input.updateCapabilityId ?? `${this.id}-update`;
     this.#initial = input.initial;
     this.#reconnected = input.reconnected ?? input.initial;
@@ -257,7 +263,7 @@ export class ScriptedFirmwareUpdateProvider implements FirmwareUpdateProvider {
   }
 
   public async validateArtifact(
-    artifact: FirmwareArtifactDescriptor,
+    artifact: VerifiedFirmwareUpdateArtifact,
     signal?: CancellationSignal,
   ): Promise<boolean> {
     assertNotAborted(signal);
@@ -309,7 +315,7 @@ export class ScriptedFirmwareUpdateProvider implements FirmwareUpdateProvider {
 
   public async prepareUpdate(
     session: DeviceSession,
-    artifact: FirmwareArtifactDescriptor,
+    artifact: VerifiedFirmwareUpdateArtifact,
     signal?: CancellationSignal,
   ): Promise<void> {
     assertNotAborted(signal);
@@ -320,7 +326,7 @@ export class ScriptedFirmwareUpdateProvider implements FirmwareUpdateProvider {
 
   public async writeFirmware(
     session: DeviceSession,
-    artifact: FirmwareArtifactDescriptor,
+    artifact: VerifiedFirmwareUpdateArtifact,
     signal?: CancellationSignal,
   ): Promise<FirmwareWriteReceipt> {
     assertNotAborted(signal);
@@ -354,7 +360,7 @@ export class ScriptedFirmwareUpdateProvider implements FirmwareUpdateProvider {
 
   public async verifyFirmware(
     session: DeviceSession,
-    artifact: FirmwareArtifactDescriptor,
+    artifact: FirmwareUpdateArtifact,
     signal?: CancellationSignal,
   ): Promise<FirmwareVerificationResult> {
     assertNotAborted(signal);

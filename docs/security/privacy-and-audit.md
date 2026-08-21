@@ -1,10 +1,10 @@
-# Privacy and Audit Policy — Milestone 1
+# Privacy and Audit Policy — Foundation + M2A
 
-Status: **Normative for M1 Foundation**. The current implementation is synthetic
-and performs no real-device I/O. Its Mock providers simulate Binding and Firmware
-write state transitions in memory, so the whole Foundation is not described as
-globally read-only. This policy defines the contract that real Web/Android
-adapters must satisfy before their data may enter logs, clipboard exports,
+Status: **Normative for the current Foundation and M2A candidate**. Synthetic
+providers simulate Binding and Firmware-write state transitions in memory.
+Separately, M2A contains one real Local HTTP provider restricted to read-only
+`GET /config`; it has no write surface and is not Hardware validated. This
+policy defines what any provider may allow into Core, logs, clipboard exports,
 support reports, or persistent storage.
 
 ## Local-first rule
@@ -16,6 +16,35 @@ support reports, or persistent storage.
 - A user action to copy/export is not consent to include secrets or stable
   hardware identifiers.
 - No automatic device change is permitted by an audit or diagnostic component.
+
+## M2A Local HTTP data inventory
+
+After explicit user action, the Browser provider may temporarily parse the
+normal ExpressLRS `/config` response. It immediately rebuilds a bounded,
+allowlisted snapshot containing only fields that are useful to the read-only
+identity view:
+
+- product label and reported Target;
+- Firmware version and commit;
+- TX/RX role and radio family;
+- low/high-band capability and regulatory-domain values;
+- a boolean indicating whether custom Hardware is reported.
+
+The raw response and parsed object exist only inside the parser and are not
+returned, logged, persisted, copied to the clipboard, or exposed to UI code.
+The provider excludes by construction:
+
+- `config.uid` and any Binding identity;
+- the complete `options` object;
+- SSID, Wi-Fi password, and other credentials;
+- `lua_name` and other user-customizable identifiers;
+- unknown top-level, `settings`, `config`, or `options` fields.
+
+The sanitized snapshot is in memory only for one provider instance. The
+real-device panel has one explicit safe support-copy action, but no raw export,
+analytics, cloud transport, storage key, or path into the separate Synthetic
+Binding/update lab. The copied report contains fixed categories and state only,
+never reported device values.
 
 ## Data classes
 
@@ -30,6 +59,13 @@ support reports, or persistent storage.
 An opaque session-local device ID is `OPERATIONAL` only if it cannot be reversed
 or correlated across sessions. Artifact SHA-256 is operational provenance; it
 must never be used as a substitute for validating the artifact source.
+
+The Synthetic compressed-artifact lab keeps copied gzip and decompressed bytes
+in bounded memory only for one validation call. It never logs, persists,
+exports, or returns the executable payload. Decompression providers may emit
+only fixed-size exact byte chunks; provider errors and unknown metadata are
+replaced by Core-owned categories. These controls do not make an unsigned
+descriptor authentic or authorize a write.
 
 ## Audit event contract
 
@@ -68,12 +104,14 @@ Before clipboard/export/support use, the scrubber must:
 
 1. build a new object from an allowlist rather than mutate and forward the raw
    object;
-2. remove known secret/identifier field names case-insensitively;
+2. never enumerate provider-owned keys or execute their accessors; probe only a
+   fixed reviewed set of allowlisted keys and known sensitive aliases through
+   own data descriptors, excluding every unknown key;
 3. reject unexpected nested objects, binary data, URLs with credentials, and raw
    exception objects;
-4. never copy a sensitive value, replacement derived from it, or hash of it;
-   record only the field name in `redactedFields` so reviewers can see that a
-   class was removed without receiving its value;
+4. never copy a sensitive value, replacement derived from it, hash of it, or
+   attacker-controlled field name; publish only bounded redacted/excluded
+   counts and reviewed category constants;
 5. retain safe provenance fields needed to reproduce the issue: app/Core
    version, upstream SHA, synthetic/catalog revision, workflow stage, stable
    error code, and validation level;
@@ -84,10 +122,43 @@ Before clipboard/export/support use, the scrubber must:
 Logs must not infer that a field is safe because its name is unfamiliar. Unknown
 adapter detail is excluded by default.
 
+Provider-controlled `OperationError.reason` and `OperationError.details` are
+also replaced/stripped at Workflow boundaries. A provider cannot leak a token
+through exception text or by placing it under a normally allowlisted detail
+key; Core-owned code must select a fixed reason and rebuild any useful detail
+from its own validated values.
+
+Provider IDs, write/command receipts, reconnect descriptors, and verification
+results are untrusted too. Sensitive workflows inspect provider metadata and
+result fields only through own data descriptors, so accessor-backed properties
+are treated as absent rather than executed. Reconnect descriptors are rebuilt
+at the Core boundary. Verification values may be used only for fixed equality
+checks; provider-supplied reasons and observed Target/version/device values are
+not forwarded into operation records or Audit output.
+
+## Read-only support report
+
+The current real-device clipboard report has schema version `1` and type
+`READ_ONLY_DEVICE_DIAGNOSTIC`. It may contain only:
+
+- fixed operation outcome, confidence, error code, retryable flag, verification
+  flag, bounded attempt count, and reconnect category;
+- reviewed fact-category and workflow-stage constants;
+- fixed finding/recommendation identifiers and the explicit validation labels
+  `BUILD_TESTED` / Hardware validation `NONE`;
+- boolean privacy declarations that all raw values, raw field names, stable
+  identifiers, credentials, and application persistence are absent.
+
+It must not accept or emit a reported value, endpoint URL, timestamp, raw field
+name, operation/session/device ID, exception text, or automatic-fix claim.
+Runtime input is rebuilt and inconsistent success/reconnect combinations become
+a fail-closed result.
+
 ## Retention and deletion
 
-- M1 audit state is volatile and is discarded on reload/process exit.
-- M1 registers no storage key, cookie, service worker cache, IndexedDB database,
+- Current audit and sanitized M2A discovery state are volatile and are discarded
+  on reload/process exit.
+- The current application registers no storage key, cookie, service worker cache, IndexedDB database,
   or local file.
 - Explicit clipboard content is under the operating system/browser after the
   user action; the UI must explain what is copied and must generate it through
@@ -98,7 +169,7 @@ adapter detail is excluded by default.
 
 ## Review gates
 
-- Adding a real provider requires a field-level data inventory.
+- Adding or expanding a real provider requires a field-level data inventory.
 - Adding diagnostic export requires scrubber implementation and tests.
 - Adding telemetry/crash reporting requires a new ADR and explicit privacy UX.
 - Adding Binding or Wi-Fi workflows requires negative tests proving forbidden

@@ -1,7 +1,14 @@
-import type { FirmwareArtifactDescriptor } from "@elrs-easy/compatibility";
+import type { FirmwareUpdateArtifact } from "@elrs-easy/compatibility";
 import { ExclusiveDeviceSessionManager } from "@elrs-easy/device";
-import type { CancellationSignal, DeviceSession } from "@elrs-easy/domain";
-import { runFirmwareUpdate } from "@elrs-easy/workflows";
+import type {
+  CancellationSignal,
+  DeviceSession,
+  FirmwareArtifactDigestProvider,
+} from "@elrs-easy/domain";
+import {
+  runFirmwareUpdate,
+  type VerifiedFirmwareUpdateArtifact,
+} from "@elrs-easy/workflows";
 import { describe, expect, it } from "vitest";
 
 import { syntheticTargetCatalog } from "./fixtures.js";
@@ -12,8 +19,10 @@ import {
 } from "./mock-sensitive-operation-providers.js";
 import {
   compatibleFirmwareArtifact,
+  createSyntheticFirmwareArtifactBytes,
   majorVersionMismatchArtifact,
   sensitiveOperationFixtures,
+  syntheticFirmwareArtifactDigestProvider,
 } from "./sensitive-operation-fixtures.js";
 
 function sessions() {
@@ -25,14 +34,16 @@ function sessions() {
 }
 
 class ArtifactRecordingFirmwareProvider extends ScriptedFirmwareUpdateProvider {
-  public writtenArtifact: FirmwareArtifactDescriptor | null = null;
+  public writtenArtifact: FirmwareUpdateArtifact | null = null;
+  public writtenBytes: Uint8Array | null = null;
 
   public override async writeFirmware(
     session: DeviceSession,
-    artifact: FirmwareArtifactDescriptor,
+    artifact: VerifiedFirmwareUpdateArtifact,
     signal?: CancellationSignal,
   ) {
-    this.writtenArtifact = Object.freeze({ ...artifact });
+    this.writtenArtifact = Object.freeze({ ...artifact.artifact });
+    this.writtenBytes = artifact.bytes.slice();
     return super.writeFirmware(session, artifact, signal);
   }
 }
@@ -42,6 +53,8 @@ function run(
   input?: {
     readonly operationId?: string;
     readonly artifact?: typeof compatibleFirmwareArtifact;
+    readonly artifactBytes?: Uint8Array;
+    readonly artifactDigestProvider?: FirmwareArtifactDigestProvider;
     readonly userConfirmed?: boolean;
     readonly signal?: CancellationSignal;
     readonly sessionManager?: ReturnType<typeof sessions>;
@@ -51,7 +64,11 @@ function run(
     operationId: input?.operationId ?? "update-1",
     descriptor: sensitiveOperationFixtures.initial.descriptor,
     artifact: input?.artifact ?? compatibleFirmwareArtifact,
-    provider,
+    artifactBytes:
+      input?.artifactBytes ?? createSyntheticFirmwareArtifactBytes(),
+    artifactDigestProvider:
+      input?.artifactDigestProvider ?? syntheticFirmwareArtifactDigestProvider,
+    providers: [provider],
     sessions: input?.sessionManager ?? sessions(),
     catalog: syntheticTargetCatalog,
     userConfirmed: input?.userConfirmed ?? true,
@@ -70,6 +87,37 @@ describe("Firmware Update with a synthetic provider", () => {
     expect(operation.state).toBe("SUCCESS");
     expect(operation.verificationPassed).toBe(true);
     expect(operation.result?.firmwareVersion).toBe("4.2.0");
+    expect(operation.result?.artifactProvenance).toEqual(
+      compatibleFirmwareArtifact.provenance,
+    );
+    expect(operation.result?.artifactProvenanceValidation).toBe(
+      "COHERENCE_ONLY",
+    );
+    expect(operation.result?.artifactByteVerification).toEqual({
+      status: "VERIFIED",
+      algorithm: "SHA-256",
+      assurance: "SYNTHETIC_ONLY",
+      byteLength: 4096,
+      sha256: compatibleFirmwareArtifact.sha256,
+    });
+    expect(operation.result?.artifactManifestTrust).toBe(
+      "UNVERIFIED_NO_TRUST_ROOT",
+    );
+    expect(operation.result?.providerAssurance).toBe("SYNTHETIC_ONLY");
+    expect(operation.result?.verificationPlan).toMatchObject({
+      id: "firmware-update-post-write-v1",
+      expectedDeviceId: sensitiveOperationFixtures.initial.descriptor.id,
+    });
+    expect(
+      operation.result?.verificationPlan.requirements.map(
+        (requirement) => requirement.fact,
+      ),
+    ).toEqual([
+      "DEVICE_RECONNECTED",
+      "DEVICE_IDENTITY_MATCHES",
+      "TARGET_MATCHES",
+      "FIRMWARE_VERSION_MATCHES",
+    ]);
     expect(operation.history).toEqual([
       "IDLE",
       "PREPARING",
@@ -82,6 +130,116 @@ describe("Firmware Update with a synthetic provider", () => {
       "VERIFYING",
       "SUCCESS",
     ]);
+  });
+
+  it("automatically selects the Target-preferred method, not array order", async () => {
+    const serial = new ScriptedFirmwareUpdateProvider({
+      initial: sensitiveOperationFixtures.initial,
+      providerId: "mock-serial",
+      updateMethod: "UART",
+    });
+    const wifi = new ScriptedFirmwareUpdateProvider({
+      initial: sensitiveOperationFixtures.initial,
+      providerId: "mock-wifi",
+      updateMethod: "WIFI_OTA",
+    });
+
+    const operation = await runFirmwareUpdate({
+      operationId: "update-auto-method-preference",
+      descriptor: sensitiveOperationFixtures.initial.descriptor,
+      artifact: compatibleFirmwareArtifact,
+      artifactBytes: createSyntheticFirmwareArtifactBytes(),
+      artifactDigestProvider: syntheticFirmwareArtifactDigestProvider,
+      providers: [serial, wifi],
+      sessions: sessions(),
+      catalog: syntheticTargetCatalog,
+      userConfirmed: true,
+      clock: { now: () => "2026-08-20T08:00:00.000Z" },
+    });
+
+    expect(operation.state).toBe("SUCCESS");
+    expect(operation.result).toMatchObject({
+      providerId: "mock-wifi",
+      updateMethod: "WIFI_OTA",
+    });
+    expect(serial.calls).toEqual([]);
+    expect(wifi.calls.some((call) => call.stage === "WRITE_FIRMWARE")).toBe(
+      true,
+    );
+  });
+
+  it("falls back automatically to another Target-supported method", async () => {
+    const serial = new ScriptedFirmwareUpdateProvider({
+      initial: sensitiveOperationFixtures.initial,
+      providerId: "mock-serial",
+      updateMethod: "UART",
+    });
+
+    const operation = await run(serial, {
+      operationId: "update-auto-method-fallback",
+    });
+
+    expect(operation.state).toBe("SUCCESS");
+    expect(operation.result).toMatchObject({
+      providerId: "mock-serial",
+      updateMethod: "UART",
+    });
+  });
+
+  it("fails before provider calls when no supported method is available", async () => {
+    const dfu = new ScriptedFirmwareUpdateProvider({
+      initial: sensitiveOperationFixtures.initial,
+      providerId: "mock-dfu",
+      updateMethod: "DFU",
+    });
+
+    const operation = await run(dfu, {
+      operationId: "update-no-supported-method",
+    });
+
+    expect(operation.state).toBe("FAILED");
+    expect(operation.error).toMatchObject({
+      code: "PROVIDER_UNSUPPORTED",
+      reason: "NO_SUPPORTED_UPDATE_METHOD_AVAILABLE",
+    });
+    expect(dfu.calls).toEqual([]);
+  });
+
+  it("snapshots the provider registry before observers can mutate it", async () => {
+    const wifi = new ScriptedFirmwareUpdateProvider({
+      initial: sensitiveOperationFixtures.initial,
+      providerId: "mock-wifi",
+      updateMethod: "WIFI_OTA",
+    });
+    const injected = new ScriptedFirmwareUpdateProvider({
+      initial: sensitiveOperationFixtures.initial,
+      providerId: "injected-wifi",
+      updateMethod: "WIFI_OTA",
+      updateCapabilityId: "mock-wifi-update",
+    });
+    const mutableProviders = [wifi];
+
+    const operation = await runFirmwareUpdate({
+      operationId: "update-provider-registry-snapshot",
+      descriptor: sensitiveOperationFixtures.initial.descriptor,
+      artifact: compatibleFirmwareArtifact,
+      artifactBytes: createSyntheticFirmwareArtifactBytes(),
+      artifactDigestProvider: syntheticFirmwareArtifactDigestProvider,
+      providers: mutableProviders,
+      sessions: sessions(),
+      catalog: syntheticTargetCatalog,
+      userConfirmed: true,
+      clock: { now: () => "2026-08-20T08:00:00.000Z" },
+      observer: (snapshot) => {
+        if (snapshot.state === "IDLE") {
+          mutableProviders.push(injected);
+        }
+      },
+    });
+
+    expect(operation.state).toBe("SUCCESS");
+    expect(operation.result?.providerId).toBe("mock-wifi");
+    expect(injected.calls).toEqual([]);
   });
 
   it("blocks an unsupported major version before any write", async () => {
@@ -141,6 +299,86 @@ describe("Firmware Update with a synthetic provider", () => {
     expect(invalid.error?.code).toBe("ARTIFACT_INVALID");
     expect(denied.error?.code).toBe("PERMISSION_DENIED");
     expect(denied.state).toBe("FAILED");
+  });
+
+  it("blocks incoherent provenance before any provider call", async () => {
+    const provider = new ScriptedFirmwareUpdateProvider({
+      initial: sensitiveOperationFixtures.initial,
+    });
+    const operation = await run(provider, {
+      operationId: "update-provenance-mismatch",
+      artifact: {
+        ...compatibleFirmwareArtifact,
+        provenance: {
+          ...compatibleFirmwareArtifact.provenance,
+          targetId: "fixture.rx.beta-subghz",
+        },
+      },
+    });
+
+    expect(operation.state).toBe("FAILED");
+    expect(operation.error).toMatchObject({
+      code: "ARTIFACT_INVALID",
+      reason: "ARTIFACT_PROVENANCE_MISMATCH",
+    });
+    expect(provider.calls).toEqual([]);
+  });
+
+  it.each([
+    ["FIRMWARE_ARTIFACT_SIZE_MISMATCH", new Uint8Array([1, 2, 3])],
+    [
+      "FIRMWARE_ARTIFACT_DIGEST_MISMATCH",
+      (() => {
+        const bytes = createSyntheticFirmwareArtifactBytes();
+        bytes[0] = (bytes[0] ?? 0) ^ 0xff;
+        return bytes;
+      })(),
+    ],
+  ] as const)(
+    "blocks byte verification reason %s before any provider call",
+    async (reason, artifactBytes) => {
+      const provider = new ScriptedFirmwareUpdateProvider({
+        initial: sensitiveOperationFixtures.initial,
+      });
+      const operation = await run(provider, {
+        operationId: `update-byte-gate-${reason}`,
+        artifactBytes,
+      });
+
+      expect(operation.state).toBe("FAILED");
+      expect(operation.error).toMatchObject({
+        code: "ARTIFACT_INVALID",
+        reason,
+      });
+      expect(provider.calls).toEqual([]);
+    },
+  );
+
+  it("does not execute accessor-backed provenance", async () => {
+    const provider = new ScriptedFirmwareUpdateProvider({
+      initial: sensitiveOperationFixtures.initial,
+    });
+    let getterCalls = 0;
+    const provenance = { ...compatibleFirmwareArtifact.provenance };
+    Object.defineProperty(provenance, "artifactSha256", {
+      get() {
+        getterCalls += 1;
+        return compatibleFirmwareArtifact.sha256;
+      },
+    });
+
+    const operation = await run(provider, {
+      operationId: "update-provenance-accessor",
+      artifact: { ...compatibleFirmwareArtifact, provenance },
+    });
+
+    expect(operation.state).toBe("FAILED");
+    expect(operation.error).toMatchObject({
+      code: "ARTIFACT_INVALID",
+      reason: "ARTIFACT_PROVENANCE_INVALID",
+    });
+    expect(provider.calls).toEqual([]);
+    expect(getterCalls).toBe(0);
   });
 
   it("requires the provider's runtime update capability before writing", async () => {
@@ -296,7 +534,9 @@ describe("Firmware Update with a synthetic provider", () => {
       operationId: "update-mutated-descriptor",
       descriptor: mutableDescriptor,
       artifact: compatibleFirmwareArtifact,
-      provider,
+      artifactBytes: createSyntheticFirmwareArtifactBytes(),
+      artifactDigestProvider: syntheticFirmwareArtifactDigestProvider,
+      providers: [provider],
       sessions: sessions(),
       catalog: syntheticTargetCatalog,
       userConfirmed: true,
@@ -323,6 +563,8 @@ describe("Firmware Update with a synthetic provider", () => {
   it("writes the validated artifact snapshot despite adversarial caller mutation", async () => {
     const originalArtifact = { ...compatibleFirmwareArtifact };
     const mutableArtifact = { ...compatibleFirmwareArtifact };
+    const originalBytes = createSyntheticFirmwareArtifactBytes();
+    const mutableBytes = originalBytes.slice();
     const provider = new ArtifactRecordingFirmwareProvider({
       initial: sensitiveOperationFixtures.initial,
     });
@@ -331,12 +573,17 @@ describe("Firmware Update with a synthetic provider", () => {
       operationId: "update-mutated-artifact",
       descriptor: sensitiveOperationFixtures.initial.descriptor,
       artifact: mutableArtifact,
-      provider,
+      artifactBytes: mutableBytes,
+      artifactDigestProvider: syntheticFirmwareArtifactDigestProvider,
+      providers: [provider],
       sessions: sessions(),
       catalog: syntheticTargetCatalog,
       userConfirmed: true,
       clock: { now: () => "2026-08-20T08:00:00.000Z" },
       observer: (snapshot) => {
+        if (snapshot.state === "IDLE") {
+          mutableBytes.fill(255);
+        }
         if (snapshot.state === "WAITING_FOR_CONFIRMATION") {
           mutableArtifact.targetId = "fixture.rx.beta-subghz";
           mutableArtifact.firmwareVersion = "9.9.9";
@@ -351,11 +598,52 @@ describe("Firmware Update with a synthetic provider", () => {
     expect(operation.state).toBe("SUCCESS");
     expect(operation.verificationPassed).toBe(true);
     expect(provider.writtenArtifact).toEqual(originalArtifact);
+    expect(provider.writtenBytes).toEqual(originalBytes);
     expect(operation.result?.targetId).toBe(originalArtifact.targetId);
     expect(operation.result?.firmwareVersion).toBe(
       originalArtifact.firmwareVersion,
     );
     expect(operation.result?.artifactSha256).toBe(originalArtifact.sha256);
+  });
+
+  it("snapshots nested provenance before the first observer", async () => {
+    const mutableProvenance = {
+      ...compatibleFirmwareArtifact.provenance,
+    };
+    const mutableArtifact = {
+      ...compatibleFirmwareArtifact,
+      provenance: mutableProvenance,
+    };
+    const provider = new ArtifactRecordingFirmwareProvider({
+      initial: sensitiveOperationFixtures.initial,
+    });
+
+    const operation = await runFirmwareUpdate({
+      operationId: "update-mutated-provenance",
+      descriptor: sensitiveOperationFixtures.initial.descriptor,
+      artifact: mutableArtifact,
+      artifactBytes: createSyntheticFirmwareArtifactBytes(),
+      artifactDigestProvider: syntheticFirmwareArtifactDigestProvider,
+      providers: [provider],
+      sessions: sessions(),
+      catalog: syntheticTargetCatalog,
+      userConfirmed: true,
+      clock: { now: () => "2026-08-20T08:00:00.000Z" },
+      observer: (snapshot) => {
+        if (snapshot.state === "IDLE") {
+          mutableProvenance.targetId = "fixture.rx.beta-subghz";
+          mutableProvenance.artifactSha256 = "a".repeat(64);
+        }
+      },
+    });
+
+    expect(operation.state).toBe("SUCCESS");
+    expect(provider.writtenArtifact?.provenance).toEqual(
+      compatibleFirmwareArtifact.provenance,
+    );
+    expect(operation.result?.artifactProvenance).toEqual(
+      compatibleFirmwareArtifact.provenance,
+    );
   });
 
   it("requires recovery when cancellation is requested after the write", async () => {
@@ -367,7 +655,9 @@ describe("Firmware Update with a synthetic provider", () => {
       operationId: "update-cancelled-after-write",
       descriptor: sensitiveOperationFixtures.initial.descriptor,
       artifact: compatibleFirmwareArtifact,
-      provider,
+      artifactBytes: createSyntheticFirmwareArtifactBytes(),
+      artifactDigestProvider: syntheticFirmwareArtifactDigestProvider,
+      providers: [provider],
       sessions: sessions(),
       catalog: syntheticTargetCatalog,
       userConfirmed: true,
@@ -402,6 +692,9 @@ describe("Firmware Update with a synthetic provider", () => {
 
     expect(operation.state).toBe("RECOVERY_REQUIRED");
     expect(operation.error?.code).toBe("VERIFICATION_FAILED");
+    expect(operation.error?.reason).toBe(
+      "POST_WRITE_FIRMWARE_VERIFICATION_FAILED",
+    );
   });
 
   it("rejects a contradictory provider verification at runtime", async () => {
@@ -419,14 +712,22 @@ describe("Firmware Update with a synthetic provider", () => {
 
     expect(operation.state).toBe("RECOVERY_REQUIRED");
     expect(operation.verificationPassed).toBe(false);
-    expect(operation.error?.reason).toBe("ARTIFACT_NOT_VERIFIED");
+    expect(operation.error?.reason).toBe(
+      "POST_WRITE_FIRMWARE_VERIFICATION_FAILED",
+    );
   });
 
   it("keeps the outcome unknown when write completion is not confirmed", async () => {
+    let getterCalls = 0;
     const operation = await run(
       new ScriptedFirmwareUpdateProvider({
         initial: sensitiveOperationFixtures.initial,
-        writeReceipt: { writeCompleted: false } as never,
+        writeReceipt: Object.defineProperty({}, "writeCompleted", {
+          get() {
+            getterCalls += 1;
+            throw new Error("wifi-password-secret");
+          },
+        }) as never,
       }),
     );
 
@@ -436,6 +737,55 @@ describe("Firmware Update with a synthetic provider", () => {
     expect(operation.error?.reason).toBe(
       "FIRMWARE_WRITE_COMPLETION_NOT_CONFIRMED",
     );
+    expect(getterCalls).toBe(0);
+  });
+
+  it("does not copy provider verification diagnostics into recovery output", async () => {
+    const secret = "WIFI_PASSWORD_SECRET_ABC123";
+    const operation = await run(
+      new ScriptedFirmwareUpdateProvider({
+        initial: sensitiveOperationFixtures.initial,
+        verification: {
+          valid: false,
+          observedTargetId: secret,
+          observedFirmwareVersion: secret,
+          reason: secret,
+        } as never,
+      }),
+      { operationId: "update-secret-verification" },
+    );
+
+    expect(operation.error?.reason).toBe(
+      "POST_WRITE_FIRMWARE_VERIFICATION_FAILED",
+    );
+    expect(JSON.stringify(operation)).not.toContain(secret);
+  });
+
+  it("does not execute an update-capability accessor outside the error boundary", async () => {
+    const provider = new ScriptedFirmwareUpdateProvider({
+      initial: sensitiveOperationFixtures.initial,
+    });
+    let getterCalls = 0;
+    Object.defineProperty(provider, "updateCapabilityId", {
+      configurable: true,
+      get() {
+        getterCalls += 1;
+        throw new Error("WIFI_PASSWORD_SECRET_ABC123");
+      },
+    });
+
+    const operation = await run(provider, {
+      operationId: "update-hostile-capability-id",
+    });
+
+    expect(operation.state).toBe("FAILED");
+    expect(operation.error).toMatchObject({
+      code: "PROVIDER_UNSUPPORTED",
+      reason: "INVALID_UPDATE_PROVIDER_REGISTRY",
+    });
+    expect(provider.calls).toEqual([]);
+    expect(getterCalls).toBe(0);
+    expect(JSON.stringify(operation)).not.toContain("SECRET_ABC123");
   });
 
   it("does not write when the user has not confirmed the operation", async () => {
@@ -528,8 +878,11 @@ describe("Firmware Update with a synthetic provider", () => {
     );
 
     expect(operation.state).toBe("UNKNOWN_STATE");
-    expect(
-      sessionManager.current(sensitiveOperationFixtures.initial.descriptor.id),
-    ).toBeNull();
+    expect(() =>
+      sessionManager.acquire({
+        deviceId: sensitiveOperationFixtures.initial.descriptor.id,
+        owner: { id: "update-cleanup-check", kind: "SYSTEM" },
+      }),
+    ).not.toThrow();
   });
 });

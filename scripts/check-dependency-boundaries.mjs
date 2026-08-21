@@ -14,6 +14,7 @@ const repositoryRoot = path.resolve(
  */
 const allowedWorkspaceDependencies = new Map([
   ["@elrs-easy/domain", new Set()],
+  ["@elrs-easy/diagnostics", new Set(["@elrs-easy/domain"])],
   ["@elrs-easy/device", new Set(["@elrs-easy/domain"])],
   ["@elrs-easy/compatibility", new Set(["@elrs-easy/domain"])],
   [
@@ -23,6 +24,10 @@ const allowedWorkspaceDependencies = new Map([
       "@elrs-easy/device",
       "@elrs-easy/compatibility",
     ]),
+  ],
+  [
+    "@elrs-easy/platform-browser",
+    new Set(["@elrs-easy/domain", "@elrs-easy/device"]),
   ],
   [
     "@elrs-easy/platform-mock",
@@ -37,9 +42,12 @@ const allowedWorkspaceDependencies = new Map([
   [
     "@elrs-easy/web",
     new Set([
+      "@elrs-easy/compatibility",
+      "@elrs-easy/diagnostics",
       "@elrs-easy/domain",
       "@elrs-easy/device",
       "@elrs-easy/workflows",
+      "@elrs-easy/platform-browser",
       "@elrs-easy/platform-mock",
       "@elrs-easy/i18n",
     ]),
@@ -64,7 +72,9 @@ const sourceExtensions = new Set([
 ]);
 const coreWorkspacePackages = new Set(
   [...allowedWorkspaceDependencies.keys()].filter(
-    (packageName) => packageName !== "@elrs-easy/web",
+    (packageName) =>
+      packageName !== "@elrs-easy/web" &&
+      packageName !== "@elrs-easy/platform-browser",
   ),
 );
 const forbiddenCoreImportPrefixes = [

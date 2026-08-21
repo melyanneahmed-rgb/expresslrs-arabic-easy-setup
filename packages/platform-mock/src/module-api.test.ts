@@ -4,29 +4,46 @@ import { describe, expect, it } from "vitest";
 
 import { fixtureById, syntheticTargetCatalog } from "./fixtures.js";
 import { MockDiscoveryProvider } from "./mock-discovery-provider.js";
+import { createSyntheticIdentityEvidencePolicy } from "./synthetic-evidence-policy.js";
 import {
   ScriptedBindingProvider,
   ScriptedFirmwareUpdateProvider,
 } from "./mock-sensitive-operation-providers.js";
 import {
   compatibleFirmwareArtifact,
+  createSyntheticFirmwareArtifactBytes,
   sensitiveOperationFixtures,
+  syntheticFirmwareArtifactDigestProvider,
 } from "./sensitive-operation-fixtures.js";
 
 function createModule() {
   let sessionId = 0;
   const fixture = fixtureById("known-tx-2g4");
+  const discovery = new MockDiscoveryProvider([fixture]);
   return new FoundationExpressLrsModule({
     providers: {
-      discovery: new MockDiscoveryProvider([fixture]),
+      discovery,
       binding: new ScriptedBindingProvider({ initial: fixture }),
-      firmwareUpdate: new ScriptedFirmwareUpdateProvider({ initial: fixture }),
+      firmwareUpdates: [
+        new ScriptedFirmwareUpdateProvider({
+          initial: fixture,
+          providerId: "mock-serial",
+          updateMethod: "UART",
+        }),
+        new ScriptedFirmwareUpdateProvider({
+          initial: fixture,
+          providerId: "mock-wifi",
+          updateMethod: "WIFI_OTA",
+        }),
+      ],
     },
     sessions: new ExclusiveDeviceSessionManager({
       clock: { now: () => "2026-08-20T08:00:00.000Z" },
       ids: { next: () => `module-session-${++sessionId}` },
     }),
     catalog: syntheticTargetCatalog,
+    artifactDigestProvider: syntheticFirmwareArtifactDigestProvider,
+    discoveryEvidencePolicy: createSyntheticIdentityEvidencePolicy(discovery),
     clock: { now: () => "2026-08-20T08:00:00.000Z" },
   });
 }
@@ -45,12 +62,21 @@ describe("FoundationExpressLrsModule", () => {
       operationId: "module-update",
       descriptor: sensitiveOperationFixtures.initial.descriptor,
       artifact: compatibleFirmwareArtifact,
+      artifactBytes: createSyntheticFirmwareArtifactBytes(),
       userConfirmed: true,
     });
 
     expect(discovery.state).toBe("SUCCESS");
     expect(binding.state).toBe("SUCCESS");
     expect(update.state).toBe("SUCCESS");
+    expect(update.result?.providerId).toBe("mock-wifi");
+    expect(update.result?.updateMethod).toBe("WIFI_OTA");
+    expect(update.result?.artifactProvenance.artifactSha256).toBe(
+      compatibleFirmwareArtifact.sha256,
+    );
+    expect(update.result?.verificationPlan.id).toBe(
+      "firmware-update-post-write-v1",
+    );
     expect(update.auditEvents.at(-1)?.outcome).toBe("SUCCEEDED");
   });
 
@@ -62,6 +88,7 @@ describe("FoundationExpressLrsModule", () => {
       operationId: "module-progress",
       descriptor: sensitiveOperationFixtures.initial.descriptor,
       artifact: compatibleFirmwareArtifact,
+      artifactBytes: createSyntheticFirmwareArtifactBytes(),
       userConfirmed: true,
       onProgress: (snapshot) => states.push(snapshot.state),
     });

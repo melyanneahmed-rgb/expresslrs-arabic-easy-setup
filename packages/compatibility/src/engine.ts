@@ -1,5 +1,7 @@
 import type {
+  ArtifactProvenance,
   DeviceIdentityResolution,
+  FirmwareUpdateMethod,
   OperationErrorCode,
 } from "@elrs-easy/domain";
 
@@ -18,7 +20,7 @@ export const compatibilityReasons = [
   "TARGET_NOT_IN_CATALOG",
   "ARTIFACT_TARGET_MISMATCH",
   "FIRMWARE_MAJOR_UNSUPPORTED",
-  "UPDATE_PROVIDER_UNSUPPORTED",
+  "UPDATE_METHOD_UNSUPPORTED",
   "COMPATIBLE_BY_PINNED_CATALOG",
 ] as const;
 export type CompatibilityReason = (typeof compatibilityReasons)[number];
@@ -27,6 +29,14 @@ export interface FirmwareArtifactDescriptor {
   readonly targetId: string;
   readonly firmwareVersion: string;
   readonly sha256: string;
+}
+
+/**
+ * Execution-grade envelope. Compatibility can inspect a descriptor alone,
+ * while an update Workflow additionally requires immutable provenance input.
+ */
+export interface FirmwareUpdateArtifact extends FirmwareArtifactDescriptor {
+  readonly provenance: ArtifactProvenance;
 }
 
 export interface CompatibilityDecision {
@@ -69,7 +79,7 @@ function parseFirmwareMajor(version: unknown): number | null {
 export function evaluateFirmwareCompatibility(input: {
   readonly identity: DeviceIdentityResolution;
   readonly artifact: FirmwareArtifactDescriptor;
-  readonly updateProvider: string;
+  readonly updateMethod: FirmwareUpdateMethod;
   readonly catalog: TargetCatalog;
 }): CompatibilityDecision {
   if (input.identity.confidence !== "CONFIRMED") {
@@ -125,10 +135,10 @@ export function evaluateFirmwareCompatibility(input: {
     };
   }
 
-  if (!target.updateProviders.includes(input.updateProvider)) {
+  if (!target.updateMethods.includes(input.updateMethod)) {
     return {
       status: "BLOCKED",
-      reasons: ["UPDATE_PROVIDER_UNSUPPORTED"],
+      reasons: ["UPDATE_METHOD_UNSUPPORTED"],
       target,
       blockingErrorCode: "PROVIDER_UNSUPPORTED",
     };

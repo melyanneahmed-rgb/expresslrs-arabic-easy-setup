@@ -1,10 +1,16 @@
 import { ExclusiveDeviceSessionManager } from "@elrs-easy/device";
-import type { OperationErrorCode } from "@elrs-easy/domain";
+import type {
+  FirmwareUpdateMethod,
+  OperationErrorCode,
+} from "@elrs-easy/domain";
 import {
+  createSyntheticFirmwareArtifact,
+  createSyntheticFirmwareArtifactBytes,
   fixtureById,
   MockDiscoveryProvider,
   ScriptedBindingProvider,
   ScriptedFirmwareUpdateProvider,
+  syntheticFirmwareArtifactDigestProvider,
   syntheticTargetCatalog,
 } from "@elrs-easy/platform-mock";
 import { FoundationExpressLrsModule } from "@elrs-easy/workflows";
@@ -19,6 +25,7 @@ export interface FoundationDemoOutcome {
   readonly errorCode: OperationErrorCode | null;
   readonly auditEventCount: number;
   readonly targetId: string | null;
+  readonly updateMethod: FirmwareUpdateMethod | null;
 }
 
 let operationSequence = 0;
@@ -77,6 +84,7 @@ function blockedOutcome(
     errorCode: blockedErrorCode(scenarioId),
     auditEventCount: 0,
     targetId: null,
+    updateMethod: null,
   });
 }
 
@@ -88,6 +96,7 @@ function deferredOutcome(task: FoundationDemoTask): FoundationDemoOutcome {
     errorCode: "PROVIDER_UNSUPPORTED",
     auditEventCount: 0,
     targetId: null,
+    updateMethod: null,
   });
 }
 
@@ -100,32 +109,38 @@ function createModule(scenarioId: MockScenarioId) {
     scenario.device?.targetId === undefined
       ? null
       : syntheticTargetCatalog.get(scenario.device.targetId);
-  const updateProviderId = target?.updateProviders[0] ?? "mock-wifi";
   let sessionSequence = 0;
   return {
     descriptor: fixture.descriptor,
-    artifact: Object.freeze({
+    artifact: createSyntheticFirmwareArtifact({
       targetId: target?.targetId ?? "unresolved",
-      firmwareVersion: "4.2.0",
-      sha256:
-        "2d71b8db0ff7388c78ebfa3e6f4d74f4d67887e9a5d75665c509ead24f9c88ee",
     }),
+    artifactBytes: createSyntheticFirmwareArtifactBytes(),
     module: new FoundationExpressLrsModule({
       providers: {
         discovery: new MockDiscoveryProvider(
           fixtureId === null ? [] : [fixture],
         ),
         binding: new ScriptedBindingProvider({ initial: fixture }),
-        firmwareUpdate: new ScriptedFirmwareUpdateProvider({
-          initial: fixture,
-          providerId: updateProviderId,
-        }),
+        firmwareUpdates: [
+          new ScriptedFirmwareUpdateProvider({
+            initial: fixture,
+            providerId: "mock-wifi",
+            updateMethod: "WIFI_OTA",
+          }),
+          new ScriptedFirmwareUpdateProvider({
+            initial: fixture,
+            providerId: "mock-serial",
+            updateMethod: "UART",
+          }),
+        ],
       },
       sessions: new ExclusiveDeviceSessionManager({
         clock: { now: () => "2026-08-20T08:00:00.000Z" },
         ids: { next: () => `web-mock-session-${++sessionSequence}` },
       }),
       catalog: syntheticTargetCatalog,
+      artifactDigestProvider: syntheticFirmwareArtifactDigestProvider,
       clock: { now: () => "2026-08-20T08:00:00.000Z" },
     }),
   };
@@ -157,6 +172,7 @@ export async function runFoundationDemo(
           operationId,
           descriptor: harness.descriptor,
           artifact: harness.artifact,
+          artifactBytes: harness.artifactBytes,
           userConfirmed,
         });
 
@@ -166,6 +182,12 @@ export async function runFoundationDemo(
     typeof operation.result.targetId === "string"
       ? operation.result.targetId
       : null;
+  const updateMethod =
+    operation.result !== null &&
+    "updateMethod" in operation.result &&
+    typeof operation.result.updateMethod === "string"
+      ? (operation.result.updateMethod as FirmwareUpdateMethod)
+      : null;
 
   return Object.freeze({
     task,
@@ -174,5 +196,6 @@ export async function runFoundationDemo(
     errorCode: operation.error?.code ?? null,
     auditEventCount: operation.auditEvents.length,
     targetId,
+    updateMethod,
   });
 }

@@ -1,4 +1,15 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
+import type {
+  ReadOnlyReconnectState,
+  ReadOnlyStageCategory,
+} from "@elrs-easy/diagnostics";
 import { scrubAuditDetails } from "@elrs-easy/domain";
 import {
   createTranslator,
@@ -25,8 +36,18 @@ import {
   runFoundationDemo,
   type FoundationDemoOutcome,
 } from "./view-model/foundationDemo";
+import {
+  compareLocalHttpIdentitySnapshots,
+  createLocalHttpSupportReport,
+  expressLrsLocalHttpOrigins,
+  runLocalHttpDiscovery,
+  type ExpressLrsLocalHttpOrigin,
+  type LocalHttpDeviceFact,
+  type LocalHttpDiscoveryOutcome,
+  type LocalHttpFactKey,
+} from "./view-model/localHttpDiscovery";
 
-type TaskId = "bind" | "update" | "setup" | "diagnose";
+type TaskId = "bind" | "update" | "setup";
 type CopyState = "idle" | "copied" | "failed";
 
 interface TaskDefinition {
@@ -63,15 +84,38 @@ const taskDefinitions: readonly TaskDefinition[] = [
     icon: <SlidersIcon />,
     tone: "amber",
   },
-  {
-    id: "diagnose",
-    titleKey: "task.diagnose.title",
-    descriptionKey: "task.diagnose.description",
-    actionKey: "task.diagnose.action",
-    icon: <PulseIcon />,
-    tone: "mint",
-  },
 ];
+
+const realOriginDefinitions: readonly {
+  readonly origin: ExpressLrsLocalHttpOrigin;
+  readonly labelKey: MessageKey;
+}[] = [
+  { origin: expressLrsLocalHttpOrigins[0], labelKey: "real.origin.ap" },
+  { origin: expressLrsLocalHttpOrigins[1], labelKey: "real.origin.rx" },
+  { origin: expressLrsLocalHttpOrigins[2], labelKey: "real.origin.tx" },
+];
+
+function cancelledLocalHttpOutcome(
+  observedStages: readonly ReadOnlyStageCategory[],
+): LocalHttpDiscoveryOutcome {
+  const stageCategories = Object.freeze([
+    ...observedStages.filter(
+      (stage) =>
+        stage !== "SUCCESS" && stage !== "FAILED" && stage !== "CANCELLED",
+    ),
+    "CANCELLED" as const,
+  ]);
+  return Object.freeze({
+    state: "CANCELLED",
+    factsCollected: false,
+    verificationPassed: false,
+    confidence: "UNKNOWN",
+    errorCode: null,
+    retryable: false,
+    facts: Object.freeze([]),
+    stageCategories,
+  });
+}
 
 export function App() {
   const [locale, setLocale] = useState<Locale>(defaultLocale);
@@ -83,7 +127,30 @@ export function App() {
   );
   const [demoRunning, setDemoRunning] = useState(false);
   const [copyState, setCopyState] = useState<CopyState>("idle");
+  const [realOrigin, setRealOrigin] =
+    useState<ExpressLrsLocalHttpOrigin>("http://10.0.0.1");
+  const [realOutcome, setRealOutcome] =
+    useState<LocalHttpDiscoveryOutcome | null>(null);
+  const [realRunning, setRealRunning] = useState(false);
+  const [realProgress, setRealProgress] = useState<
+    readonly ReadOnlyStageCategory[]
+  >([]);
+  const [realReconnectState, setRealReconnectState] =
+    useState<ReadOnlyReconnectState>("NOT_ATTEMPTED");
+  const [realAttempts, setRealAttempts] = useState(0);
+  const [realCopyState, setRealCopyState] = useState<CopyState>("idle");
+  const [realCopyRunning, setRealCopyRunning] = useState(false);
   const demoRequestSequence = useRef(0);
+  const realRequestSequence = useRef(0);
+  const realAttemptSequence = useRef(0);
+  const realCopyRequestSequence = useRef(0);
+  const realAbortController = useRef<AbortController | null>(null);
+  const realBaselineFacts = useRef<readonly LocalHttpDeviceFact[] | null>(null);
+  const realProgressStages = useRef<readonly ReadOnlyStageCategory[]>([]);
+  const realReconnectPending = useRef(false);
+  const realFocusResultAfterRun = useRef(false);
+  const realCancelButton = useRef<HTMLButtonElement | null>(null);
+  const realResultSummary = useRef<HTMLDivElement | null>(null);
   const t = useMemo(() => createTranslator(locale), [locale]);
   const scenario = getMockScenario(scenarioId);
   const selectedTaskDefinition = taskDefinitions.find(
@@ -105,6 +172,177 @@ export function App() {
     document.documentElement.dir = direction;
     document.title = t("app.name");
   }, [direction, locale, t]);
+
+  useEffect(
+    () => () => {
+      realRequestSequence.current += 1;
+      realAbortController.current?.abort();
+      realAbortController.current = null;
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (realRunning) {
+      realCancelButton.current?.focus();
+    } else if (realFocusResultAfterRun.current) {
+      realResultSummary.current?.focus();
+      realFocusResultAfterRun.current = false;
+    }
+  }, [realRunning]);
+
+  function selectRealOrigin(origin: ExpressLrsLocalHttpOrigin) {
+    realRequestSequence.current += 1;
+    realCopyRequestSequence.current += 1;
+    realAbortController.current?.abort();
+    realAbortController.current = null;
+    setRealOrigin(origin);
+    setRealOutcome(null);
+    setRealRunning(false);
+    setRealProgress([]);
+    setRealReconnectState("NOT_ATTEMPTED");
+    setRealAttempts(0);
+    setRealCopyState("idle");
+    setRealCopyRunning(false);
+    realAttemptSequence.current = 0;
+    realBaselineFacts.current = null;
+    realProgressStages.current = [];
+    realReconnectPending.current = false;
+    realFocusResultAfterRun.current = false;
+  }
+
+  async function readRealDevice() {
+    realAbortController.current?.abort();
+    const controller = new AbortController();
+    realAbortController.current = controller;
+    const requestId = ++realRequestSequence.current;
+    const attemptNumber = ++realAttemptSequence.current;
+    const baseline = realBaselineFacts.current;
+    realCopyRequestSequence.current += 1;
+    realProgressStages.current = [];
+    realFocusResultAfterRun.current = false;
+    setRealOutcome(null);
+    setRealRunning(true);
+    setRealProgress([]);
+    setRealReconnectState(
+      realReconnectPending.current ? "REQUIRED" : "NOT_ATTEMPTED",
+    );
+    setRealAttempts(attemptNumber);
+    setRealCopyState("idle");
+    setRealCopyRunning(false);
+    try {
+      const outcome = await runLocalHttpDiscovery({
+        origin: realOrigin,
+        signal: controller.signal,
+        onProgress(stage) {
+          if (realRequestSequence.current !== requestId) {
+            return;
+          }
+          realProgressStages.current = realProgressStages.current.includes(
+            stage,
+          )
+            ? realProgressStages.current
+            : [...realProgressStages.current, stage];
+          setRealProgress((current) =>
+            current.includes(stage) ? current : [...current, stage],
+          );
+        },
+      });
+      if (realRequestSequence.current === requestId) {
+        realFocusResultAfterRun.current =
+          document.activeElement === realCancelButton.current;
+        setRealOutcome(outcome);
+        setRealProgress(outcome.stageCategories);
+        realProgressStages.current = outcome.stageCategories;
+        if (outcome.state === "SUCCESS") {
+          if (baseline === null) {
+            realBaselineFacts.current = outcome.facts;
+            setRealReconnectState("NOT_ATTEMPTED");
+            realReconnectPending.current = false;
+          } else if (realReconnectPending.current) {
+            setRealReconnectState(
+              compareLocalHttpIdentitySnapshots(baseline, outcome.facts),
+            );
+            realReconnectPending.current = false;
+          } else {
+            setRealReconnectState("NOT_ATTEMPTED");
+          }
+        } else if (
+          outcome.state === "FAILED" &&
+          outcome.errorCode === "CONNECTION_LOST" &&
+          baseline !== null
+        ) {
+          realReconnectPending.current = true;
+          setRealReconnectState("REQUIRED");
+        } else if (realReconnectPending.current) {
+          // Once a baseline read has been followed by a confirmed connection
+          // loss, keep the comparison pending through cancellation, DEVICE_BUSY
+          // quarantine, or another intermediate failure. Only a successful
+          // comparison or an explicit origin change resolves this state.
+          setRealReconnectState("REQUIRED");
+        } else {
+          setRealReconnectState("NOT_ATTEMPTED");
+        }
+      }
+    } finally {
+      if (realRequestSequence.current === requestId) {
+        realAbortController.current = null;
+        setRealRunning(false);
+      }
+    }
+  }
+
+  function cancelRealDeviceRead() {
+    realRequestSequence.current += 1;
+    realCopyRequestSequence.current += 1;
+    realAbortController.current?.abort();
+    realAbortController.current = null;
+    const outcome = cancelledLocalHttpOutcome(realProgressStages.current);
+    realFocusResultAfterRun.current =
+      document.activeElement === realCancelButton.current;
+    setRealRunning(false);
+    setRealOutcome(outcome);
+    setRealProgress(outcome.stageCategories);
+    realProgressStages.current = outcome.stageCategories;
+    setRealReconnectState(
+      realReconnectPending.current ? "REQUIRED" : "NOT_ATTEMPTED",
+    );
+    setRealCopyState("idle");
+    setRealCopyRunning(false);
+  }
+
+  async function copyRealSupportDetails() {
+    if (realOutcome === null) {
+      return;
+    }
+    const requestId = ++realCopyRequestSequence.current;
+    const outcome = realOutcome;
+    const attempts = realAttempts;
+    const baselineAvailable = realBaselineFacts.current !== null;
+    const reconnectState = realReconnectState;
+    setRealCopyState("idle");
+    setRealCopyRunning(true);
+    try {
+      const report = createLocalHttpSupportReport({
+        outcome,
+        attempts,
+        baselineAvailable,
+        reconnectState,
+      });
+      await navigator.clipboard.writeText(JSON.stringify(report, null, 2));
+      if (realCopyRequestSequence.current === requestId) {
+        setRealCopyState("copied");
+      }
+    } catch {
+      if (realCopyRequestSequence.current === requestId) {
+        setRealCopyState("failed");
+      }
+    } finally {
+      if (realCopyRequestSequence.current === requestId) {
+        setRealCopyRunning(false);
+      }
+    }
+  }
 
   function selectScenario(nextScenario: MockScenarioId) {
     demoRequestSequence.current += 1;
@@ -164,8 +402,9 @@ export function App() {
       {
         schemaVersion: "1",
         safeDetails: scrubbed.details,
-        redactedFields: scrubbed.redactedFields,
-        excludedFields: scrubbed.excludedFields,
+        redactedFieldCount: scrubbed.redactedFieldCount,
+        excludedFieldCount: scrubbed.excludedFieldCount,
+        redactionCategories: scrubbed.redactionCategories,
       },
       null,
       2,
@@ -235,10 +474,11 @@ export function App() {
           <LockIcon />
         </span>
         <span>{t("app.mockNotice")}</span>
+        <span className="preview-validation">{t("status.previewBadge")}</span>
       </div>
 
       <main id="main-content" className="page" tabIndex={-1}>
-        <section className="hero" aria-labelledby="hero-title">
+        <section className="hero simple-hero" aria-labelledby="hero-title">
           <div className="hero-copy">
             <span className="eyebrow">
               <SparkIcon />
@@ -246,58 +486,34 @@ export function App() {
             </span>
             <h1 id="hero-title">{t("home.title")}</h1>
             <p>{t("home.description")}</p>
-          </div>
 
-          <aside className="safety-summary" aria-labelledby="safety-heading">
-            <span className="safety-icon" aria-hidden="true">
-              <ShieldIcon />
-            </span>
-            <div>
-              <h2 id="safety-heading">{t("safety.heading")}</h2>
-              <p>{t("safety.description")}</p>
-            </div>
-          </aside>
-        </section>
-
-        <section className="preview-strip" aria-labelledby="preview-heading">
-          <div className="preview-heading">
-            <div>
-              <span className="section-kicker">{t("status.readOnly")}</span>
-              <h2 id="preview-heading">{t("home.mockLabel")}</h2>
-              <p>{t("home.mockHelp")}</p>
-            </div>
-            <span className="mock-badge">{t("status.mockBadge")}</span>
-          </div>
-
-          <div className="scenario-list" role="list">
-            {mockScenarios.map((item) => (
-              <button
-                key={item.id}
-                className={
-                  item.id === scenarioId
-                    ? "scenario-chip is-active"
-                    : "scenario-chip"
-                }
-                type="button"
-                onClick={() => selectScenario(item.id)}
-                aria-pressed={item.id === scenarioId}
-              >
-                <span
-                  className={`scenario-indicator confidence-${item.confidence}`}
-                  aria-hidden="true"
-                />
-                {t(item.labelKey)}
-              </button>
-            ))}
+            <ol className="setup-steps" aria-label={t("home.stepsLabel")}>
+              <li>
+                <span>1</span>
+                <strong>{t("home.step.connect")}</strong>
+              </li>
+              <li>
+                <span>2</span>
+                <strong>{t("home.step.identify")}</strong>
+              </li>
+              <li>
+                <span>3</span>
+                <strong>{t("home.step.complete")}</strong>
+              </li>
+            </ol>
           </div>
         </section>
 
-        <div className="dashboard-grid">
-          <section className="task-panel" aria-labelledby="tasks-heading">
+        <div className="simple-workspace">
+          <section
+            className="task-panel primary-actions"
+            aria-labelledby="tasks-heading"
+          >
             <div className="section-heading">
               <div>
                 <span className="section-kicker">{t("mode.easy")}</span>
-                <h2 id="tasks-heading">{t("home.title")}</h2>
+                <h2 id="tasks-heading">{t("home.actionsTitle")}</h2>
+                <p>{t("home.actionsDescription")}</p>
               </div>
             </div>
 
@@ -402,43 +618,21 @@ export function App() {
             ) : null}
           </section>
 
-          <section className="device-panel" aria-labelledby="device-heading">
-            <DeviceOverview scenario={scenario} t={t} />
-          </section>
+          <SimpleDeviceSummary scenario={scenario} t={t} />
         </div>
 
-        <section className="details-grid">
-          <DiscoveryProgress scenario={scenario} t={t} />
-          <EvidencePanel scenario={scenario} t={t} />
-        </section>
-
-        <section
-          className={
-            !sensitiveActionsAvailable
-              ? "safety-callout is-blocked"
-              : "safety-callout"
-          }
-          aria-live="polite"
-        >
-          <span className="safety-callout-icon" aria-hidden="true">
-            {!sensitiveActionsAvailable ? <LockIcon /> : <ShieldCheckIcon />}
+        <section className="simple-assurance" aria-label={t("safety.heading")}>
+          <span aria-hidden="true">
+            <ShieldCheckIcon />
           </span>
           <div>
-            <h2>
-              {!sensitiveActionsAvailable
-                ? t("safety.blockedTitle")
-                : t("safety.readOnlyTitle")}
-            </h2>
-            <p>
-              {!sensitiveActionsAvailable
-                ? t("safety.blockedDescription")
-                : t("safety.readOnlyDescription")}
-            </p>
+            <strong>{t("safety.heading")}</strong>
+            <p>{t("safety.description")}</p>
           </div>
         </section>
 
         <section
-          className="advanced-section"
+          className="advanced-section simplified-advanced"
           aria-labelledby="advanced-heading"
         >
           <div className="advanced-toggle-row">
@@ -460,56 +654,169 @@ export function App() {
           </div>
 
           {advanced ? (
-            <div className="advanced-content">
-              <dl className="technical-grid">
-                <TechnicalDatum
-                  label={t("advanced.session")}
-                  value={t(scenario.sessionDisplayKey)}
-                />
-                <TechnicalDatum
-                  label={t("advanced.owner")}
-                  value={t("advanced.ownerValue")}
-                />
-                <TechnicalDatum
-                  label={t("advanced.provider")}
-                  value={t("advanced.providerValue")}
-                />
-                <TechnicalDatum
-                  label={t("advanced.operation")}
-                  value={t("advanced.operationValue")}
-                />
-              </dl>
-              <div className="log-row">
-                <div>
-                  <strong>{t("advanced.log")}</strong>
-                  <p>
-                    <code>{t("advanced.logLevel")}</code>{" "}
-                    {t("advanced.logEntry")}
-                  </p>
-                  <p>{t("advanced.exportDescription")}</p>
+            <div className="advanced-content advanced-workspace">
+              <section
+                className="preview-strip"
+                aria-labelledby="preview-heading"
+              >
+                <div className="preview-heading">
+                  <div>
+                    <span className="section-kicker">
+                      {t("status.readOnly")}
+                    </span>
+                    <h2 id="preview-heading">{t("home.mockLabel")}</h2>
+                    <p>{t("home.mockHelp")}</p>
+                  </div>
+                  <span className="mock-badge">{t("status.mockBadge")}</span>
                 </div>
-                <button
-                  className="secondary-button"
-                  type="button"
-                  onClick={() => void copyTechnicalDetails()}
+
+                <div
+                  className="scenario-list"
+                  role="group"
+                  aria-label={t("home.mockHelp")}
                 >
-                  <CopyIcon />
-                  {copyState === "copied"
-                    ? t("advanced.copied")
-                    : t("advanced.copy")}
-                </button>
-              </div>
-              {copyState !== "idle" ? (
-                <p
-                  className={`clipboard-status ${copyState === "failed" ? "is-error" : ""}`}
-                  role="status"
+                  {mockScenarios.map((item) => (
+                    <button
+                      key={item.id}
+                      className={
+                        item.id === scenarioId
+                          ? "scenario-chip is-active"
+                          : "scenario-chip"
+                      }
+                      type="button"
+                      onClick={() => selectScenario(item.id)}
+                      aria-pressed={item.id === scenarioId}
+                    >
+                      <span
+                        className={`scenario-indicator confidence-${item.confidence}`}
+                        aria-hidden="true"
+                      />
+                      {t(item.labelKey)}
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              <div className="advanced-device-grid">
+                <section
+                  className="device-panel"
+                  aria-labelledby="device-heading"
+                >
+                  <DeviceOverview scenario={scenario} t={t} />
+                </section>
+
+                <section
+                  className={
+                    !sensitiveActionsAvailable
+                      ? "safety-callout is-blocked"
+                      : "safety-callout"
+                  }
                   aria-live="polite"
                 >
-                  {copyState === "failed"
-                    ? t("advanced.copyFailed")
-                    : t("advanced.copied")}
-                </p>
-              ) : null}
+                  <span className="safety-callout-icon" aria-hidden="true">
+                    {!sensitiveActionsAvailable ? (
+                      <LockIcon />
+                    ) : (
+                      <ShieldCheckIcon />
+                    )}
+                  </span>
+                  <div>
+                    <h2>
+                      {!sensitiveActionsAvailable
+                        ? t("safety.blockedTitle")
+                        : t("safety.readOnlyTitle")}
+                    </h2>
+                    <p>
+                      {!sensitiveActionsAvailable
+                        ? t("safety.blockedDescription")
+                        : t("safety.readOnlyDescription")}
+                    </p>
+                  </div>
+                </section>
+              </div>
+
+              <section className="details-grid">
+                <DiscoveryProgress scenario={scenario} t={t} />
+                <EvidencePanel scenario={scenario} t={t} />
+              </section>
+
+              <div
+                className="mock-divider"
+                role="separator"
+                aria-label={t("real.mockDivider")}
+              >
+                <span>{t("real.mockDivider")}</span>
+              </div>
+
+              <RealDeviceReadPanel
+                locale={locale}
+                origin={realOrigin}
+                outcome={realOutcome}
+                running={realRunning}
+                progress={realProgress}
+                reconnectState={realReconnectState}
+                copyState={realCopyState}
+                copyRunning={realCopyRunning}
+                t={t}
+                onOriginChange={selectRealOrigin}
+                onRead={() => void readRealDevice()}
+                onCancel={cancelRealDeviceRead}
+                onCopy={() => void copyRealSupportDetails()}
+                cancelButtonRef={realCancelButton}
+                resultSummaryRef={realResultSummary}
+              />
+
+              <div className="technical-panel">
+                <dl className="technical-grid">
+                  <TechnicalDatum
+                    label={t("advanced.session")}
+                    value={t(scenario.sessionDisplayKey)}
+                  />
+                  <TechnicalDatum
+                    label={t("advanced.owner")}
+                    value={t("advanced.ownerValue")}
+                  />
+                  <TechnicalDatum
+                    label={t("advanced.provider")}
+                    value={t("advanced.providerValue")}
+                  />
+                  <TechnicalDatum
+                    label={t("advanced.operation")}
+                    value={t("advanced.operationValue")}
+                  />
+                </dl>
+                <div className="log-row">
+                  <div>
+                    <strong>{t("advanced.log")}</strong>
+                    <p>
+                      <code>{t("advanced.logLevel")}</code>{" "}
+                      {t("advanced.logEntry")}
+                    </p>
+                    <p>{t("advanced.exportDescription")}</p>
+                  </div>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => void copyTechnicalDetails()}
+                  >
+                    <CopyIcon />
+                    {copyState === "copied"
+                      ? t("advanced.copied")
+                      : t("advanced.copy")}
+                  </button>
+                </div>
+                {copyState !== "idle" ? (
+                  <p
+                    className={`clipboard-status ${copyState === "failed" ? "is-error" : ""}`}
+                    role="status"
+                    aria-live="polite"
+                  >
+                    {copyState === "failed"
+                      ? t("advanced.copyFailed")
+                      : t("advanced.copied")}
+                  </p>
+                ) : null}
+              </div>
             </div>
           ) : null}
         </section>
@@ -524,6 +831,8 @@ export function App() {
           <span>{t("footer.version")}</span>
           <span aria-hidden="true">·</span>
           <span>{t("app.independent")}</span>
+          <span aria-hidden="true">·</span>
+          <a href="THIRD_PARTY_NOTICES.txt">{t("footer.notices")}</a>
         </div>
       </footer>
     </div>
@@ -531,6 +840,513 @@ export function App() {
 }
 
 type Translator = ReturnType<typeof createTranslator>;
+
+function SimpleDeviceSummary({
+  scenario,
+  t,
+}: {
+  scenario: MockScenarioViewModel;
+  t: Translator;
+}) {
+  const device = scenario.device;
+  const latestVersionKey = "scenarioValue.firmware.v410" as const;
+  const isCurrent = device?.firmwareKey === latestVersionKey;
+
+  return (
+    <section
+      className="simple-device-summary"
+      aria-labelledby="simple-device-heading"
+    >
+      <div className="simple-device-heading">
+        <div>
+          <span className="section-kicker">{t("simple.device.kicker")}</span>
+          <h2 id="simple-device-heading">
+            {device ? t("simple.device.connected") : t("device.none")}
+          </h2>
+        </div>
+        <ConnectionBadge state={device?.connection ?? "disconnected"} t={t} />
+      </div>
+
+      {device ? (
+        <>
+          <div className="simple-device-identity">
+            <span aria-hidden="true">
+              {device.kind === "receiver" ? (
+                <ReceiverIcon />
+              ) : (
+                <TransmitterIcon />
+              )}
+            </span>
+            <div>
+              <strong>
+                {device.kind === "receiver"
+                  ? t("device.receiver")
+                  : t("device.transmitter")}
+              </strong>
+              <small>{t("simple.device.demo")}</small>
+            </div>
+          </div>
+
+          <dl className="simple-version-list">
+            <div>
+              <dt>{t("simple.device.installed")}</dt>
+              <dd>{t(device.firmwareKey)}</dd>
+            </div>
+            <div>
+              <dt>{t("simple.device.latest")}</dt>
+              <dd>{t(latestVersionKey)}</dd>
+            </div>
+          </dl>
+
+          <span
+            className={
+              isCurrent
+                ? "simple-update-state is-current"
+                : "simple-update-state"
+            }
+          >
+            {isCurrent
+              ? t("simple.device.upToDate")
+              : t("simple.device.updateAvailable")}
+          </span>
+        </>
+      ) : (
+        <p className="simple-device-empty">{t("simple.device.connect")}</p>
+      )}
+    </section>
+  );
+}
+
+function RealDeviceReadPanel({
+  locale,
+  origin,
+  outcome,
+  running,
+  progress,
+  reconnectState,
+  copyState,
+  copyRunning,
+  t,
+  onOriginChange,
+  onRead,
+  onCancel,
+  onCopy,
+  cancelButtonRef,
+  resultSummaryRef,
+}: {
+  locale: Locale;
+  origin: ExpressLrsLocalHttpOrigin;
+  outcome: LocalHttpDiscoveryOutcome | null;
+  running: boolean;
+  progress: readonly ReadOnlyStageCategory[];
+  reconnectState: ReadOnlyReconnectState;
+  copyState: CopyState;
+  copyRunning: boolean;
+  t: Translator;
+  onOriginChange: (origin: ExpressLrsLocalHttpOrigin) => void;
+  onRead: () => void;
+  onCancel: () => void;
+  onCopy: () => void;
+  cancelButtonRef: RefObject<HTMLButtonElement | null>;
+  resultSummaryRef: RefObject<HTMLDivElement | null>;
+}) {
+  const connectionFailed = outcome?.state === "FAILED";
+  const showConnectionHelp = outcome?.errorCode === "CONNECTION_LOST";
+  const showChangeOriginHelp = outcome?.errorCode === "PROVIDER_UNSUPPORTED";
+  const canRead = !running && (!connectionFailed || outcome.retryable);
+  const readAction = connectionFailed
+    ? t("real.retryAction")
+    : outcome?.state === "SUCCESS"
+      ? t("real.refreshAction")
+      : t("real.readAction");
+  const originDescriptionIds = [
+    "real-origin-help",
+    ...(showConnectionHelp ? ["real-connection-help"] : []),
+    ...(showChangeOriginHelp ? ["real-change-origin-help"] : []),
+  ].join(" ");
+  const resultDescriptionIds = [
+    ...(showConnectionHelp ? ["real-connection-help"] : []),
+    ...(showChangeOriginHelp ? ["real-change-origin-help"] : []),
+    ...(reconnectState === "NOT_ATTEMPTED" ? [] : ["real-reconnect-status"]),
+  ];
+  const localizedError =
+    outcome?.state === "FAILED"
+      ? t("real.errorDescription", {
+          message: translateOperationError(
+            locale,
+            outcome.errorCode ?? "INTERNAL_ERROR",
+          ),
+        })
+      : null;
+
+  return (
+    <section
+      className="real-device-panel"
+      aria-labelledby="real-device-heading"
+      aria-busy={running}
+    >
+      <div className="real-device-heading">
+        <div>
+          <span className="section-kicker">{t("real.kicker")}</span>
+          <h2 id="real-device-heading">{t("real.heading")}</h2>
+          <p>{t("real.description")}</p>
+        </div>
+        <div className="real-device-badges">
+          <span className="read-only-badge">
+            <LockIcon />
+            {t("real.readOnlyBadge")}
+          </span>
+          <span className="validation-badge">{t("real.unvalidatedBadge")}</span>
+        </div>
+      </div>
+
+      <div className="real-device-grid">
+        <div className="real-device-controls">
+          <aside className="wifi-impact" aria-labelledby="wifi-impact-title">
+            <span aria-hidden="true">
+              <SignalIcon />
+            </span>
+            <div>
+              <h3 id="wifi-impact-title">{t("real.impactTitle")}</h3>
+              <p>{t("real.impactDescription")}</p>
+            </div>
+          </aside>
+
+          <label className="origin-field" htmlFor="expresslrs-local-origin">
+            <span>{t("real.originLabel")}</span>
+            <select
+              id="expresslrs-local-origin"
+              value={origin}
+              disabled={running}
+              aria-describedby={originDescriptionIds}
+              onChange={(event) => {
+                const selected = expressLrsLocalHttpOrigins.find(
+                  (candidate) => candidate === event.currentTarget.value,
+                );
+                if (selected !== undefined) {
+                  onOriginChange(selected);
+                }
+              }}
+            >
+              {realOriginDefinitions.map((definition) => (
+                <option key={definition.origin} value={definition.origin}>
+                  {t(definition.labelKey)}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <p className="real-idle-help" id="real-origin-help">
+            {t("real.idleHelp")}
+          </p>
+          {showConnectionHelp || showChangeOriginHelp ? (
+            <div
+              className="real-connection-help"
+              id={showConnectionHelp ? "real-connection-help" : undefined}
+            >
+              {showConnectionHelp ? <p>{t("real.connectionHelp")}</p> : null}
+              {showChangeOriginHelp ? (
+                <p id="real-change-origin-help">{t("real.changeOriginHelp")}</p>
+              ) : null}
+            </div>
+          ) : null}
+          <div className="real-device-actions">
+            {running ? (
+              <button
+                ref={cancelButtonRef}
+                className="secondary-button"
+                type="button"
+                onClick={onCancel}
+              >
+                {t("real.cancelAction")}
+              </button>
+            ) : canRead ? (
+              <button className="primary-button" type="button" onClick={onRead}>
+                <CableIcon />
+                {readAction}
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="real-device-result">
+          {outcome !== null ? (
+            <p
+              className="sr-only"
+              role={outcome?.state === "FAILED" ? "alert" : "status"}
+              aria-atomic="true"
+            >
+              {outcome.state === "SUCCESS"
+                ? t("real.successTitle")
+                : outcome.state === "FAILED"
+                  ? `${t("real.errorTitle")} ${localizedError ?? ""}`
+                  : t("real.cancelled")}
+            </p>
+          ) : null}
+          <div
+            ref={resultSummaryRef}
+            className="real-result-summary"
+            tabIndex={-1}
+            aria-describedby={
+              resultDescriptionIds.length === 0
+                ? undefined
+                : resultDescriptionIds.join(" ")
+            }
+          >
+            {running ? (
+              <div className="real-result-state is-loading">
+                <span className="real-state-icon" aria-hidden="true">
+                  <SignalIcon />
+                </span>
+                <div>
+                  <strong>{t("real.loading")}</strong>
+                  <p>{t("real.noSecrets")}</p>
+                </div>
+              </div>
+            ) : outcome?.state === "SUCCESS" ? (
+              <RealDeviceSuccess outcome={outcome} t={t} />
+            ) : outcome?.state === "FAILED" ? (
+              <div className="real-result-state is-error">
+                <span className="real-state-icon" aria-hidden="true">
+                  <AlertIcon />
+                </span>
+                <div>
+                  <strong>{t("real.errorTitle")}</strong>
+                  <p>{localizedError}</p>
+                  {!outcome.retryable ? (
+                    <p>{t("real.retryUnavailable")}</p>
+                  ) : null}
+                </div>
+              </div>
+            ) : outcome?.state === "CANCELLED" ? (
+              <div className="real-result-state">
+                <span className="real-state-icon" aria-hidden="true">
+                  <ShieldIcon />
+                </span>
+                <div>
+                  <strong>{t("real.cancelled")}</strong>
+                  <p>{t("real.noSecrets")}</p>
+                </div>
+              </div>
+            ) : (
+              <div className="real-result-state">
+                <span className="real-state-icon" aria-hidden="true">
+                  <ShieldCheckIcon />
+                </span>
+                <div>
+                  <strong>{t("real.readOnlyBadge")}</strong>
+                  <p>{t("real.noSecrets")}</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {running || progress.length > 0 ? (
+            <RealReadProgress progress={progress} running={running} t={t} />
+          ) : null}
+
+          {reconnectState !== "NOT_ATTEMPTED" ? (
+            <p
+              id="real-reconnect-status"
+              className={`real-reconnect-note ${reconnectState === "CHANGED" || reconnectState === "REQUIRED" ? "is-warning" : "is-consistent"}`}
+            >
+              {t(realReconnectMessage(reconnectState))}
+            </p>
+          ) : null}
+
+          {outcome !== null ? (
+            <div className="real-support">
+              <p>{t("real.support.privacy")}</p>
+              <div className="real-support-actions">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={onCopy}
+                  disabled={copyRunning}
+                  aria-busy={copyRunning}
+                >
+                  {copyRunning
+                    ? t("real.support.copying")
+                    : t("real.support.copyAction")}
+                </button>
+                {copyState !== "idle" ? (
+                  <p
+                    className={`clipboard-status ${copyState === "failed" ? "is-error" : ""}`}
+                    role="status"
+                    aria-live="polite"
+                  >
+                    {copyState === "failed"
+                      ? t("real.support.copyFailed")
+                      : t("real.support.copied")}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function RealReadProgress({
+  progress,
+  running,
+  t,
+}: {
+  progress: readonly ReadOnlyStageCategory[];
+  running: boolean;
+  t: Translator;
+}) {
+  const latest = progress.at(-1);
+
+  return (
+    <section className="real-progress" aria-labelledby="real-progress-heading">
+      <h3 id="real-progress-heading">{t("real.progress.heading")}</h3>
+      {running && latest !== undefined ? (
+        <p className="sr-only" role="status" aria-atomic="true">
+          {t(realProgressMessage(latest))}
+        </p>
+      ) : null}
+      <ol className="real-progress-list">
+        {progress.map((stage) => (
+          <li
+            key={stage}
+            className={`real-progress-item ${stage === latest ? "is-current" : "is-observed"} ${stage === "FAILED" || stage === "CANCELLED" ? "is-terminal" : ""}`}
+            aria-current={running && stage === latest ? "step" : undefined}
+          >
+            <span aria-hidden="true">
+              {realProgressMarker(stage, latest, running)}
+            </span>
+            {t(realProgressMessage(stage))}
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+function realProgressMarker(
+  stage: ReadOnlyStageCategory,
+  latest: ReadOnlyStageCategory | undefined,
+  running: boolean,
+): string {
+  if (stage === latest && running) {
+    return "…";
+  }
+  if (stage === "FAILED") {
+    return "!";
+  }
+  if (stage === "CANCELLED") {
+    return "×";
+  }
+  if (stage === "SUCCESS" || latest === "SUCCESS") {
+    return "✓";
+  }
+  return "•";
+}
+
+function realProgressMessage(stage: ReadOnlyStageCategory): MessageKey {
+  const messages: Readonly<Record<ReadOnlyStageCategory, MessageKey>> = {
+    PREPARING: "real.progress.preparing",
+    DISCOVERING: "real.progress.discovering",
+    IDENTIFYING: "real.progress.identifying",
+    VERIFYING: "real.progress.verifying",
+    SUCCESS: "real.progress.success",
+    FAILED: "real.progress.failed",
+    CANCELLED: "real.progress.cancelled",
+  };
+  return messages[stage];
+}
+
+function realReconnectMessage(
+  state: Exclude<ReadOnlyReconnectState, "NOT_ATTEMPTED">,
+): MessageKey {
+  const messages: Readonly<
+    Record<Exclude<ReadOnlyReconnectState, "NOT_ATTEMPTED">, MessageKey>
+  > = {
+    REQUIRED: "real.reconnect.required",
+    CONSISTENT: "real.reconnect.consistent",
+    CHANGED: "real.reconnect.changed",
+  };
+  return messages[state];
+}
+
+function RealDeviceSuccess({
+  outcome,
+  t,
+}: {
+  outcome: LocalHttpDiscoveryOutcome;
+  t: Translator;
+}) {
+  return (
+    <div className="real-success">
+      <div className="real-success-heading">
+        <span className="real-state-icon" aria-hidden="true">
+          <CheckIcon />
+        </span>
+        <div>
+          <strong>{t("real.successTitle")}</strong>
+          <p>{t("real.successDescription")}</p>
+        </div>
+        <span className="reported-badge">{t("real.reportedBadge")}</span>
+      </div>
+
+      <dl className="real-facts">
+        {outcome.facts.map((fact) => (
+          <DeviceFact
+            key={fact.key}
+            label={t(realFactLabel(fact.key))}
+            value={realFactValue(fact, t)}
+            mono={fact.key === "target" || fact.key === "commit"}
+          />
+        ))}
+      </dl>
+
+      <div className="real-identity-warning">
+        <LockIcon />
+        <div>
+          <strong>{t("real.unknownTitle")}</strong>
+          <p>{t("real.unknownDescription")}</p>
+        </div>
+      </div>
+      <p className="real-snapshot-note">{t("real.snapshotNotice")}</p>
+      <p className="real-privacy-note">{t("real.noSecrets")}</p>
+    </div>
+  );
+}
+
+function realFactLabel(key: LocalHttpFactKey): MessageKey {
+  const labels: Record<LocalHttpFactKey, MessageKey> = {
+    product: "real.fact.product",
+    target: "real.fact.target",
+    version: "real.fact.version",
+    commit: "real.fact.commit",
+    role: "real.fact.role",
+    radio: "real.fact.radio",
+    band: "real.fact.band",
+    regLow: "real.fact.regLow",
+    regHigh: "real.fact.regHigh",
+    custom: "real.fact.custom",
+  };
+  return labels[key];
+}
+
+function realFactValue(fact: LocalHttpDeviceFact, t: Translator): string {
+  if (fact.key === "custom") {
+    return fact.value === "true" ? t("real.value.yes") : t("real.value.no");
+  }
+  if (fact.key === "band") {
+    const bands: Readonly<Record<string, MessageKey>> = {
+      LOW_BAND: "real.value.lowBand",
+      HIGH_BAND: "real.value.highBand",
+      DUAL_BAND: "real.value.dualBand",
+    };
+    const key = bands[fact.value];
+    return key === undefined ? t("real.value.unknownBand") : t(key);
+  }
+  return fact.value;
+}
 
 function DeviceOverview({
   scenario,

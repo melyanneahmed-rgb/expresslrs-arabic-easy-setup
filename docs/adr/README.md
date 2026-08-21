@@ -13,5 +13,14 @@ ADRs تسجل `Context / Decision / Alternatives / Consequences`. لا يُعا�
 - ADR-0007: model-agnostic device support — accepted.
 - ADR-0008: Cairo typography — accepted.
 - ADR-0009: Milestone 1 threat model and trust boundaries — accepted for M1.
+- ADR-0010: read-only Local HTTP discovery — accepted for the M2A technical spike.
+- ADR-0011: GitHub Pages public development preview — accepted with explicit hosting and Hardware limits.
+- ADR-0012: automatic multi-method Firmware update selection — accepted for Core and Synthetic providers only.
+- ADR-0013: Synthetic artifact provenance and Core-owned Verification Plan — accepted without signed-manifest or Hardware claims.
+- ADR-0014: Signed-manifest trust design and byte-verification boundary — accepted without a trust root or real writer.
+- ADR-0015: bounded Synthetic manifest parsing and Ed25519 verification — accepted as `VALID_UNTRUSTED` software evidence only.
+- ADR-0016: bounded Synthetic root metadata, dual-threshold rotation, expiry, revocation, and unpersisted rollback-state transitions — accepted without an admitted root or storage adapter.
+- ADR-0017: bounded Synthetic gzip, dual-form digest verification, and executable/Target identity — accepted as non-writable fixture evidence only.
+- ADR-0018: separately versioned Synthetic dual-form Manifest plus internally branded root/rollback/artifact linkage — accepted as non-admitted, non-writable catalog-candidate evidence only.
 
 Android platform strategy remains intentionally undecided until the real-device spike.
